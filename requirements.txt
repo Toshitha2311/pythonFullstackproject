@@ -1,0 +1,5 @@
+streamlit>=1.29  #Frontend
+supabase>=2.0.2   #Supabase client
+fastapi>=0.104.1  #Backend
+uvicorn>=0.24.0   #asgi server for FastAPI
+python-dotenv>=1.0.0 #Environment variable management
