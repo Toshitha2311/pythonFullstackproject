@@ -1,4 +1,4 @@
-# src/logic_classes.py
+# src/logic.py
 import random
 from src.db import (
     create_habit,
@@ -16,7 +16,7 @@ class Habits:
     """Class to manage habits table operations."""
 
     def __init__(self):
-        """Constructor: currently no DB object needed, placeholder for future."""
+        """Constructor: placeholder for future (DB connection, etc.)."""
         pass
 
     def add(self, name: str, description: str = None):
