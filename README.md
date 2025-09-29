@@ -65,34 +65,33 @@ pip install -r requirements.txt
 
 1️⃣ Habits Table
 
-CREATE TABLE habits (
-    habit_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),  -- automatically generates a unique ID
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+-- Enable UUID generation
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Habits table
+CREATE TABLE public.habits (
+    habit_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now()
 );
 
-
-2️⃣ HabitLogs Table
-
-CREATE TABLE habit_logs (
-    id SERIAL PRIMARY KEY,
-    habit_id UUID NOT NULL REFERENCES habits(habit_id) ON DELETE CASCADE,
-    date DATE DEFAULT CURRENT_DATE,  -- automatically takes today's date
-    completed BOOLEAN DEFAULT FALSE
+-- Habit logs table
+CREATE TABLE public.habit_logs (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    habit_id uuid REFERENCES public.habits(habit_id),
+    date date DEFAULT CURRENT_DATE,
+    completed boolean DEFAULT false
 );
 
-
-3️⃣ WeeklyPerformance Table (Optional)
-
-CREATE TABLE weekly_performance (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),        -- auto-generated unique ID
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    week_start DATE DEFAULT CURRENT_DATE,                -- automatically takes current date if not provided
-    completion_pct FLOAT DEFAULT 0,
-    stars INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW()                   -- optional timestamp for record creation
+-- Weekly performance table
+CREATE TABLE public.weekly_performance (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL DEFAULT gen_random_uuid(),
+    week_start date DEFAULT CURRENT_DATE,
+    completion_pct numeric(5,2) DEFAULT 0,
+    stars int DEFAULT 0
 );
 
 ```
