@@ -1,135 +1,199 @@
-# Frontend/app.py
 import streamlit as st
 import requests
+import time
 
-API_URL = "http://localhost:8000"
+API_URL = "http://127.0.0.1:8000"
 
-st.set_page_config(page_title="HabitHub", layout="wide")
+# -------------------------------
+# HELPER FUNCTIONS
+# -------------------------------
+def safe_post(endpoint, data=None, use_auth=True):
+    """POST request with optional JWT auth."""
+    try:
+        headers = {}
+        if use_auth and "access_token" in st.session_state:
+            headers["Authorization"] = f"Bearer {st.session_state.access_token}"
+        res = requests.post(f"{API_URL}{endpoint}", json=data or {}, headers=headers)
+        return res.json() if res.status_code == 200 else {"success": False, "message": f"Server error: {res.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
-# ------------------------------
-# SESSION STATE: Username
-# ------------------------------
-if "username" not in st.session_state:
-    st.session_state.username = ""
+def safe_get(endpoint, use_auth=True):
+    """GET request with optional JWT auth."""
+    try:
+        headers = {}
+        if use_auth and "access_token" in st.session_state:
+            headers["Authorization"] = f"Bearer {st.session_state.access_token}"
+        res = requests.get(f"{API_URL}{endpoint}", headers=headers)
+        return res.json() if res.status_code == 200 else {"success": False, "message": f"Server error: {res.status_code}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
-if not st.session_state.username:
-    st.title("👋 Welcome to HabitHub")
-    name = st.text_input("Enter your name to continue:")
-    if st.button("Start"):
-        if name.strip():
-            st.session_state.username = name.strip()
-            st.experimental_rerun()
-else:
-    # ------------------------------
-    # SIDEBAR NAVIGATION
-    # ------------------------------
-    st.sidebar.title("📌 Navigation")
-    page = st.sidebar.radio(
-        "Go to",
-        ["🏠 Dashboard", "➕ Add Habit", "📊 Weekly Performance", "⚙️ Settings"]
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.success(f"Logged in as **{st.session_state.username}**")
+# -------------------------------
+# SESSION STATE
+# -------------------------------
+if "show_dashboard" not in st.session_state:
+    st.session_state.show_dashboard = False
+if "habits_updated" not in st.session_state:
+    st.session_state.habits_updated = False
+if "habits_list" not in st.session_state:
+    st.session_state.habits_list = []
+if "completed_set" not in st.session_state:
+    st.session_state.completed_set = set()
+if "access_token" not in st.session_state:
+    st.session_state.access_token = None
 
-    st.title(f"🎯 Welcome, {st.session_state.username}!")
-    st.markdown("Manage your habits, track progress, and see weekly performance.")
+# -------------------------------
+# PAGE SETUP
+# -------------------------------
+st.set_page_config(page_title="HabitHub", page_icon="🎯", layout="wide", initial_sidebar_state="expanded")
+st.markdown("""
+<style>
+[data-testid="stSidebar"] {background-color: #f0f8ff;}
+.stButton>button:hover {background-color: #66a6ff; color: white; transform: scale(1.05); transition: 0.3s;}
+</style>
+""", unsafe_allow_html=True)
 
-    # ------------------------------
-    # API HELPERS
-    # ------------------------------
-    def safe_get(url):
-        try:
-            r = requests.get(url, timeout=5)
-            return r.json() if r.status_code == 200 else {}
-        except:
-            return {}
+# -------------------------------
+# LOGIN / REGISTER SCREEN
+# -------------------------------
+if not st.session_state.access_token:
+    st.title("🔐 Login to HabitHub")
+    tab1, tab2 = st.tabs(["Login", "Register"])
 
-    def safe_post(url, json_data):
-        try:
-            r = requests.post(url, json=json_data, timeout=5)
-            return r.json() if r.status_code == 200 else {}
-        except:
-            return {}
-
-    # ------------------------------
-    # PAGES
-    # ------------------------------
-    if page == "🏠 Dashboard":
-        st.subheader("📌 Today's Habits")
-        habits_resp = safe_get(f"{API_URL}/habits")
-        habits = habits_resp.get("habits", []) if habits_resp else []
-
-        if not habits:
-            st.info("No habits found. Add some habits first!")
-        else:
-            completed_today = []
-            for habit in habits:
-                habit_name = habit.get("name", "")
-                checked = st.checkbox(habit_name, key=habit_name)
-                if checked:
-                    res = safe_post(f"{API_URL}/habits/complete", {"name": habit_name})
-                    if res.get("success"):
-                        completed_today.append(habit_name)
-            if completed_today:
-                st.success(f"✅ Completed: {', '.join(completed_today)}")
-
-        # End-of-day status
-        status = safe_get(f"{API_URL}/habitlogs/status")
-        if status.get("success"):
-            st.subheader("💬 End-of-Day Status")
-            st.info(status.get("message"))
-
-    elif page == "➕ Add Habit":
-        st.subheader("➕ Add New Habit")
-        with st.form("add_habit_form"):
-            habit_name = st.text_input("Habit Name")
-            habit_desc = st.text_area("Description (optional)")
-            submitted = st.form_submit_button("Add Habit")
-            if submitted and habit_name.strip():
-                res = safe_post(f"{API_URL}/habits", {"name": habit_name, "description": habit_desc})
-                if res.get("success"):
-                    st.success(f"Habit '{habit_name}' added successfully!")
-                    st.experimental_rerun()
-                else:
-                    st.error(res.get("message") or "Error adding habit")
-
-    elif page == "📊 Weekly Performance":
-        st.subheader("📊 Weekly Performance")
-        weekly_resp = safe_get(f"{API_URL}/weeklyperformance")
-        weekly_report = weekly_resp.get("weekly_report", []) if weekly_resp else []
-
-        if weekly_report:
-            last_week = weekly_report[-1]
-            completion_pct = last_week.get("completion_pct", 0)
-            week_start = last_week.get("week_start")
-
-            st.markdown(f"### 📅 Week starting {week_start}")
-            st.metric(
-                label=f"{st.session_state.username}'s Completion Rate",
-                value=f"{completion_pct:.2f}%"
-            )
-
-            # VIBGYOR color coding
-            if completion_pct >= 80:
-                color = "#4CAF50"  # Green
-            elif completion_pct >= 60:
-                color = "#FFEB3B"  # Yellow
-            elif completion_pct >= 40:
-                color = "#FF9800"  # Orange
-            elif completion_pct >= 20:
-                color = "#F44336"  # Red
+    with tab1:
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            res = safe_post("/auth/login", {"email": email, "password": password}, use_auth=False)
+            if res.get("success"):
+                st.session_state.access_token = res["access_token"]
+                st.session_state.show_dashboard = True
+                st.success("Login successful! ✅")
+                st.experimental_rerun()
             else:
-                color = "#9C27B0"  # Violet
+                st.warning(res.get("message"))
+
+    with tab2:
+        email = st.text_input("Register Email")
+        password = st.text_input("Register Password", type="password")
+        if st.button("Register"):
+            res = safe_post("/auth/register", {"email": email, "password": password}, use_auth=False)
+            if res.get("success"):
+                st.success("Registered successfully! Please login now.")
+            else:
+                st.warning(res.get("message"))
+    st.stop()
+
+# -------------------------------
+# WELCOME SCREEN
+# -------------------------------
+if not st.session_state.show_dashboard:
+    st.title("🎯 Welcome to HabitHub! 🌈")
+    st.image("https://media.giphy.com/media/l0HlvtIPzPdt2usKs/giphy.gif", width=300)
+    if st.button("Start Your Journey!"):
+        st.session_state.show_dashboard = True
+        st.session_state.habits_updated = True
+    st.stop()
+
+# -------------------------------
+# DASHBOARD
+# -------------------------------
+st.sidebar.title("HabitHub Dashboard")
+page = st.sidebar.radio("Navigation", ["Habits Dashboard", "Weekly Performance", "Today's Status"])
+
+# -------------------------------
+# HABITS DASHBOARD
+# -------------------------------
+if page == "Habits Dashboard":
+    st.title("🎯 Habits Dashboard")
+    st.subheader("➕ Add New Habit")
+    new_name = st.text_input("Habit Name")
+    new_desc = st.text_input("Description (optional)")
+    if st.button("Add Habit") and new_name.strip():
+        res = safe_post("/habit/add", {"name": new_name.strip(), "description": new_desc.strip()})
+        if res.get("success"):
+            st.success(res.get("message"))
+            st.session_state.habits_updated = True
+            st.balloons()
+        else:
+            st.warning(res.get("message"))
+
+    if st.session_state.habits_updated:
+        res = safe_get("/habit/list")
+        st.session_state.habits_list = res.get("habits", [])
+        st.session_state.habits_updated = False
+
+    habits_list = st.session_state.habits_list
+    if not habits_list:
+        st.info("You have no habits yet. Add one above! 🎉")
+
+    cols = st.columns(2)
+    for i, habit in enumerate(habits_list):
+        col = cols[i % 2]
+        with col:
+            habit_name = habit["name"]
+            habit_id = habit["habit_id"]
+            key = f"{habit_name}_{i}"
+
+            completed = st.checkbox(habit_name, key=key)
+            if completed and habit_id not in st.session_state.completed_set:
+                safe_post("/habit/complete", {"habit_id": habit_id})
+                st.session_state.completed_set.add(habit_id)
+                st.image("https://media.giphy.com/media/26tPoyDhjiJ2g7rEs/giphy.gif", width=200)
 
             st.markdown(
-                f"<div style='width:100%;height:25px;background:{color};border-radius:5px'></div>",
+                f"<div style='background-color:#f4f4f4; padding:15px; border-radius:12px; margin-bottom:12px;'>"
+                f"<p>{habit.get('description','')}</p></div>",
                 unsafe_allow_html=True
             )
-        else:
-            st.info("Weekly performance will be generated automatically on Sunday night.")
 
-    elif page == "⚙️ Settings":
-        st.subheader("⚙️ Settings")
-        if st.button("Logout"):
-            st.session_state.username = ""
-            st.experimental_rerun()
+# -------------------------------
+# WEEKLY PERFORMANCE
+# -------------------------------
+elif page == "Weekly Performance":
+    st.title("🏆 Weekly Performance")
+    weekly_report = safe_get("/weekly/report").get("weekly_report", [])
+
+    if weekly_report:
+        for week in weekly_report:
+            week_start = week["week_start"]
+            pct = week["completion_pct"]
+            stars = week.get("stars", int(pct // 25))
+            badge = "🌟 Completed!" if pct >= 100 else ""
+            st.markdown(
+                f"<div style='background-color:#cce5ff; padding:15px; border-radius:12px; margin-bottom:12px;'>"
+                f"<h3>Week starting {week_start} {badge}</h3>"
+                f"<p>Completion: {pct:.2f}%</p>"
+                f"<p>Stars: {'⭐'*stars + '☆'*(4-stars)}</p></div>",
+                unsafe_allow_html=True
+            )
+
+    if st.button("Update Weekly Performance"):
+        res = safe_post("/weekly/calculate")
+        if res.get("success"):
+            st.success(res.get("message"))
+        else:
+            st.warning(res.get("message"))
+
+# -------------------------------
+# TODAY'S STATUS
+# -------------------------------
+elif page == "Today's Status":
+    st.title("📅 Today's Habit Status")
+    status = safe_get("/habit/status")
+    if status.get("success"):
+        for item in status["status"]["status"]:
+            st.write(f"✅ {item['habit_name']}" if item["completed"] else f"❌ {item['habit_name']}")
+    else:
+        st.warning(status.get("message"))
+
+# -------------------------------
+# LOGOUT
+# -------------------------------
+if st.sidebar.button("Logout"):
+    st.session_state.access_token = None
+    st.session_state.show_dashboard = False
+    st.session_state.habits_updated = True
+    st.session_state.completed_set = set()
+    st.experimental_rerun()

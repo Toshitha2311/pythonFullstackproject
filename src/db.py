@@ -1,131 +1,108 @@
-# src/logic_classes.py
-import random
-from src.db import (
-    create_habit,
-    get_habits,
-    mark_habit_completed,
-    delete_habit,
-    get_weekly_performance,
-    end_of_day_status
-)
+import os
+from datetime import date, timedelta
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # -------------------------------
-# CLASS: Habits
+# Initialize Supabase client
 # -------------------------------
-class Habits:
-    """Class to manage habits table operations."""
-
-    def __init__(self):
-        """Constructor: currently no DB object needed, placeholder for future."""
-        pass
-
-    def add(self, name: str, description: str = None):
-        if not name or name.strip() == "":
-            return {"success": False, "message": "Enter the habit name"}
-        result = create_habit(name.strip(), description)
-        if result.get("data"):
-            return {"success": True, "message": f"Habit '{name}' added successfully."}
-        else:
-            return {"success": False, "message": f"Error: {result.get('error') or 'Unknown error'}"}
-
-    def list(self):
-        result = get_habits()
-        if not result or not result.get("data"):
-            return {"success": True, "habits": [], "message": "No habits found."}
-        return {"success": True, "habits": result["data"]}
-
-    def complete(self, name: str):
-        if not name or name.strip() == "":
-            return {"success": False, "message": "Habit name is required."}
-        result = mark_habit_completed(name.strip())
-        if result.get("data"):
-            return {"success": True, "message": f"Habit '{name}' marked as completed today! ✅"}
-        else:
-            return {"success": False, "message": f"Error: {result.get('error') or 'Unknown error'}"}
-
-    def remove(self, name: str):
-        if not name or name.strip() == "":
-            return {"success": False, "message": "Habit name is required."}
-        result = delete_habit(name.strip())
-        if result.get("data"):
-            return {"success": True, "message": f"Habit '{name}' removed successfully."}
-        else:
-            return {"success": False, "message": f"Error: {result.get('error') or 'Unknown error'}"}
+url: str = os.getenv("SUPABASE_URL")
+key: str = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(url, key)
 
 
 # -------------------------------
-# CLASS: HabitLogs
+# HABITS FUNCTIONS
 # -------------------------------
-class HabitLogs:
-    """Class to manage habit_logs table operations."""
+def create_habit(user_id: str, name: str, description: str = None):
+    return supabase.table("habits").insert({
+        "user_id": user_id,
+        "name": name,
+        "description": description
+    }).execute()
 
-    def __init__(self):
-        """Constructor for HabitLogs class."""
-        self.habits = Habits()
 
-    def complete(self, habit_name: str):
-        """Mark habit completed today using habit name."""
-        return self.habits.complete(habit_name)
+def get_habits(user_id: str):
+    return supabase.table("habits").select("*").eq("user_id", user_id).execute()
 
-    def status(self):
-        """Return end-of-day status with funny motivational quotes."""
-        result = end_of_day_status()
-        if not result:
-            return {"success": False, "message": "Could not fetch end-of-day status."}
 
-        completed_count = result.get("completed_count", 0)
-        total_habits = len(get_habits().get("data", []))
+def mark_habit_completed(habit_id: str):
+    today = date.today().isoformat()
+    existing_log = supabase.table("habit_logs") \
+        .select("*") \
+        .eq("habit_id", habit_id) \
+        .eq("date", today) \
+        .execute()
 
-        QUOTES_COMPLETED = [
-            "You crushed it today! 💪 Even your coffee is proud!",
-            "Amazing! 🎉 Keep this streak alive, superstar!",
-            "Well done! 🏆 Your habits fear you now!",
-            "Keep shining! ✨ You're a habit hero!",
-            "Woohoo! 🎊 Success tastes better than snacks!",
-            "Legendary! 🦸‍♂️ Keep flexing those productivity muscles!",
-            "Fantastic! 🌟 Today's you is better than yesterday's!",
-        ]
+    if existing_log.data and len(existing_log.data) > 0:
+        log_id = existing_log.data[0]["id"]
+        return supabase.table("habit_logs").update({"completed": True}).eq("id", log_id).execute()
+    else:
+        return supabase.table("habit_logs").insert({
+            "habit_id": habit_id,
+            "completed": True
+        }).execute()
 
-        QUOTES_NOT_COMPLETED = [
-            "Oops! 😅 No habits completed. Tomorrow’s a new adventure!",
-            "Don't worry! 🐢 Slow progress is still progress!",
-            "Hey! 🎈 Tomorrow is waiting for your comeback!",
-            "No sweat! 🌞 Every master was once a beginner!",
-            "Keep smiling 😁 The grind continues tomorrow!",
-            "Oopsie! 🍩 Treat yourself and try again tomorrow!",
-            "Remember: 🚀 Even astronauts had training days off!",
-        ]
 
-        if completed_count == 0:
-            quote = random.choice(QUOTES_NOT_COMPLETED)
-            status = "not_completed"
-            message = f"{quote} (0/{total_habits} habits completed today)"
-        else:
-            quote = random.choice(QUOTES_COMPLETED)
-            status = "completed"
-            message = f"{quote} ({completed_count}/{total_habits} habits completed today)"
-
-        return {
-            "success": True,
-            "status": status,
-            "message": message,
-            "completed_count": completed_count
-        }
+def delete_habit(habit_id: str):
+    return supabase.table("habits").delete().eq("habit_id", habit_id).execute()
 
 
 # -------------------------------
-# CLASS: WeeklyPerformance
+# WEEKLY PERFORMANCE FUNCTIONS
 # -------------------------------
-class WeeklyPerformance:
-    """Class to manage weekly_performance table operations."""
+def create_weekly_performance_for_user(user_id: str, week_start: date):
+    week_end = week_start + timedelta(days=6)
 
-    def __init__(self):
-        """Constructor for WeeklyPerformance class."""
-        pass
+    habits_resp = supabase.table("habits").select("habit_id").eq("user_id", user_id).execute()
+    if not habits_resp.data:
+        completion_pct = 0
+    else:
+        habit_ids = [h["habit_id"] for h in habits_resp.data]
+        total_expected = len(habit_ids) * 7
 
-    def get_report(self):
-        """Return weekly performance for the current user."""
-        result = get_weekly_performance()
-        if not result or not result.get("data"):
-            return {"success": True, "weekly_report": [], "message": "No weekly performance found."}
-        return {"success": True, "weekly_report": result["data"]}
+        logs_resp = supabase.table("habit_logs").select("*") \
+            .in_("habit_id", habit_ids) \
+            .gte("date", week_start.isoformat()) \
+            .lte("date", week_end.isoformat()) \
+            .eq("completed", True) \
+            .execute()
+
+        completed_count = len(logs_resp.data) if logs_resp.data else 0
+        completion_pct = (completed_count / total_expected) * 100 if total_expected > 0 else 0
+
+    return supabase.table("weekly_performance").insert({
+        "user_id": user_id,
+        "week_start": week_start.isoformat(),
+        "completion_pct": completion_pct
+    }).execute()
+
+
+def get_weekly_performance(user_id: str):
+    return supabase.table("weekly_performance").select("*").eq("user_id", user_id).execute()
+
+
+# -------------------------------
+# DAILY STATUS
+# -------------------------------
+def end_of_day_status(user_id: str):
+    today = date.today().isoformat()
+    habits_resp = supabase.table("habits").select("*").eq("user_id", user_id).execute()
+    if not habits_resp.data:
+        return {"message": "No habits found."}
+
+    status_list = []
+    for habit in habits_resp.data:
+        habit_id = habit["habit_id"]
+        logs_resp = supabase.table("habit_logs").select("*") \
+            .eq("habit_id", habit_id) \
+            .eq("date", today) \
+            .execute()
+        completed = logs_resp.data[0]["completed"] if logs_resp.data else False
+        status_list.append({
+            "habit_name": habit["name"],
+            "completed": completed
+        })
+    return {"date": today, "status": status_list}
