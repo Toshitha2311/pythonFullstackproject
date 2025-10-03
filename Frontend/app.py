@@ -98,8 +98,6 @@ def lighten_hex(hex_color: str, factor: float = 1.2) -> str:
     except Exception:
         return hex_color
 
-    
-
 # -------------------------------
 # SESSION STATE INIT
 # -------------------------------
@@ -127,6 +125,16 @@ if "habit_targets" not in st.session_state:
 if "auth_mode" not in st.session_state:
     # 'login' or 'register' to control right panel form
     st.session_state.auth_mode = "login"
+if "alarms" not in st.session_state:
+    st.session_state.alarms = {}
+if "alarm_history" not in st.session_state:
+    st.session_state.alarm_history = []
+if "user_habits_data" not in st.session_state:
+    st.session_state.user_habits_data = []
+if "user_monthly_data" not in st.session_state:
+    st.session_state.user_monthly_data = []
+if "last_reset_date" not in st.session_state:
+    st.session_state.last_reset_date = None
 
 # -------------------------------
 # CARTOON STYLING WITH ORANGE/VIOLET/WHITE THEME
@@ -147,11 +155,12 @@ def apply_cartoon_styles():
     .main-header {
         font-family: 'Poppins', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
         font-size: 2.5rem !important;
-        color: #e9ebff !important;
+        color: #ffffff !important;
         text-align: center;
         margin-top: 0.5rem !important;
         margin-bottom: 0.75rem !important;
         letter-spacing: 0.3px;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3) !important;
     }
     
     @keyframes bounce {
@@ -189,7 +198,7 @@ def apply_cartoon_styles():
         -webkit-backdrop-filter: blur(12px) saturate(120%) !important;
         transition: transform 0.25s ease, box-shadow 0.25s ease !important;
         animation: fadeIn 0.8s ease-in;
-        color: #E6E8F6 !important;
+        color: #ffffff !important;
     }
     
     .habit-bubble {
@@ -201,12 +210,12 @@ def apply_cartoon_styles():
         box-shadow: 0 8px 25px rgba(0,0,0,0.25) !important;
         transition: transform 0.25s ease, box-shadow 0.25s ease !important;
         animation: slideIn 0.6s ease-out;
-        color: #E6E8F6 !important;
+        color: #ffffff !important;
         backdrop-filter: blur(10px) !important;
     }
-    .habit-bubble h2 { font-size: 1.1rem !important; margin: 0 0 0.2rem 0 !important; }
-    .habit-bubble h3 { font-size: 0.95rem !important; margin: 0.25rem 0 0 0 !important; font-weight: 600 !important; }
-    .habit-bubble p, .habit-bubble div, .habit-bubble span { font-size: 0.92rem !important; }
+    .habit-bubble h2 { font-size: 1.1rem !important; margin: 0 0 0.2rem 0 !important; color: #ffffff !important; }
+    .habit-bubble h3 { font-size: 0.95rem !important; margin: 0.25rem 0 0 0 !important; font-weight: 600 !important; color: #ffffff !important; }
+    .habit-bubble p, .habit-bubble div, .habit-bubble span { font-size: 0.92rem !important; color: #ffffff !important; }
     
     .habit-completed {
         background: linear-gradient(180deg, rgba(76, 175, 80, 0.20), rgba(139, 195, 74, 0.12)) !important;
@@ -263,7 +272,7 @@ def apply_cartoon_styles():
         text-align: center !important;
         box-shadow: 0 8px 22px rgba(0, 0, 0, 0.25) !important;
         animation: fadeIn 1s ease-in;
-        color: #E6E8F6 !important;
+        color: #ffffff !important;
         backdrop-filter: blur(10px) !important;
     }
     
@@ -272,7 +281,7 @@ def apply_cartoon_styles():
         border-radius: 14px !important;
         padding: 0.6rem !important;
         text-align: center !important;
-        color: #F4F6FF !important;
+        color: #ffffff !important;
         font-weight: 600 !important; font-size: 0.95rem !important;
         margin: 0.75rem 0 1rem 0 !important;
         animation: fadeIn 1.2s ease-in;
@@ -293,8 +302,8 @@ def apply_cartoon_styles():
     
     h1, h2, h3, h4, h5, h6 {
         color: #FFFFFF !important;
-        text-shadow: 2px 2px 0 #8A2BE2 !important;
-        font-family: 'Comic Sans MS', cursive !important;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.3) !important;
+        font-family: 'Poppins', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
     }
     
     .stTextInput > div > div > input, .stTextArea > div > div > textarea {
@@ -311,57 +320,94 @@ def apply_cartoon_styles():
         margin: 2rem 0 !important;
         animation: fadeIn 2s ease-in;
     }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Override with glassmorphism theme matching provided UI/background
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-    .stApp {
-        background: radial-gradient(1200px 600px at 10% 20%, rgba(255, 124, 170, 0.20), transparent 60%),
-                    radial-gradient(1000px 500px at 90% 15%, rgba(148, 118, 255, 0.22), transparent 60%),
-                    radial-gradient(900px 600px at 30% 85%, rgba(255, 190, 120, 0.18), transparent 60%),
-                    linear-gradient(160deg, #070a1f 0%, #0b0f2b 60%, #0a0e27 100%) !important;
-        font-family: 'Poppins', 'Inter', 'Segoe UI', Roboto, system-ui, -apple-system, sans-serif !important;
+    
+    /* Alarm specific styles */
+    .alarm-active {
+        background: linear-gradient(45deg, #FF416C, #FF4B2B) !important;
+        border: 2px solid #FFFFFF !important;
+        animation: alarmPulse 1s infinite;
     }
-    .main-header, h1, h2, h3, h4, h5, h6 {
-        color: #E9EBFF !important; text-shadow: none !important; margin-bottom: 0.4rem !important;
-        font-family: 'Poppins', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+    
+    @keyframes alarmPulse {
+        0% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 65, 108, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 65, 108, 0); }
     }
-    .cartoon-card { background: rgba(255,255,255,0.08) !important; border: 1px solid rgba(255,255,255,0.20) !important; border-radius: 18px !important; box-shadow: 0 10px 30px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.12) !important; backdrop-filter: blur(12px) saturate(120%) !important; -webkit-backdrop-filter: blur(12px) saturate(120%) !important; color: #E6E8F6 !important; padding: 1.25rem !important; }
-    .habit-bubble { background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.06)) !important; border: 1px solid rgba(255,255,255,0.18) !important; border-radius: 16px !important; color:#E6E8F6 !important; backdrop-filter: blur(10px) !important; }
-    .habit-bubble h2 { font-size: 1.1rem !important; margin: 0 0 0.2rem 0 !important; }
-    .habit-bubble h3 { font-size: 0.95rem !important; margin: 0.25rem 0 0 0 !important; font-weight: 600 !important; }
-    .habit-bubble p, .habit-bubble div, .habit-bubble span { font-size: 0.92rem !important; }
-    .habit-completed { background: linear-gradient(180deg, rgba(76, 175, 80, 0.20), rgba(139,195,74,0.12)) !important; border: 1px solid rgba(182,255,182,0.30) !important; color:#E9FFEA !important; }
-    .metric-card { background: rgba(255,255,255,0.07) !important; border: 1px solid rgba(255,255,255,0.18) !important; color:#E6E8F6 !important; backdrop-filter: blur(10px) !important; }
-    .date-display { background: linear-gradient(180deg, rgba(138,43,226,0.28), rgba(147,112,219,0.14)) !important; border:1px solid rgba(255,255,255,0.18) !important; color:#F4F6FF !important; }
-    .stButton > button { border-radius:12px !important; border:1px solid rgba(255,255,255,0.25) !important; background: linear-gradient(180deg, rgba(147,124,255,0.30), rgba(147,124,255,0.18)) !important; color:#fff !important; font-weight:600 !important; box-shadow:0 8px 20px rgba(147,124,255,0.25) !important; backdrop-filter: blur(8px) saturate(120%) !important; }
-    .stButton > button:hover { transform: translateY(-1px) !important; box-shadow:0 10px 24px rgba(147,124,255,0.35) !important; }
 
-    /* Floating Action Button centered bottom */
-    .fab-wrap { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 1000; }
-    .fab-wrap .stButton > button { width:60px !important; height:60px !important; border-radius:50% !important; padding:0 !important; font-size:30px !important; line-height:1 !important; background:linear-gradient(135deg,#8866ff 0%, #6a4bff 100%) !important; box-shadow:0 14px 30px rgba(104,82,255,.45) !important; border:0 !important; }
-
-    /* Large '+' hero for Add Habit */
-    .plus-hero { display:flex; align-items:center; justify-content:center; height:58vh; position:relative; z-index:1; }
-    .plus-hero .hint { position:absolute; bottom:18%; color:#E9EBFF; opacity:.8; }
-
-    /* Auth layout like reference */
-    .auth-wrap { display:flex; gap: 22px; align-items: stretch; justify-content:center; margin: 18px auto 8px auto; max-width: 950px; }
-    .auth-left { flex: 1 1 48%; background: var(--logoDark, #5a49cc); color:#fff; border-radius: 18px; padding: 26px 28px; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
-    .auth-left h2 { margin: 0 0 8px 0; font-size: 1.6rem; }
-    .auth-left p { margin: 0 0 16px 0; opacity:.95; }
-    .auth-left .corner { position:absolute; right:0; top:0; width:120px; height:120px; background: rgba(255,255,255,0.18); border-bottom-left-radius: 100px; border-top-right-radius: 18px; }
-    .auth-right { flex: 1 1 52%; background: #ffffff; color:#333; border-radius: 18px; padding: 22px 22px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
-    .auth-right.bright { background:#ffffff; box-shadow: 0 14px 34px rgba(106,75,255,0.35); border: 1px solid rgba(106,75,255,0.25); }
-    .auth-right h3 { margin: 0 0 12px 0; font-weight: 700; color:#252a41; }
-    .auth-right .stTextInput input, .auth-right .stTextArea textarea { background:#f5f6fa; border-radius:10px; height:32px; font-size:0.92rem; padding:4px 8px; }
-    .auth-right .stTextInput > div > div, .auth-right .stTextArea > div > div { width: 260px !important; }
-    .auth-right .stTextInput, .auth-right .stTextArea, .auth-right .stButton { display:block; margin-left:auto; margin-right:auto; }
-    .auth-right .stButton > button { width: 260px !important; height: 34px !important; border-radius:10px !important; font-size:0.95rem !important; }
-    @media (max-width: 900px) { .auth-wrap { flex-direction: column; max-width: 560px; } }
+    /* Auth page specific styles */
+    .auth-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 2rem;
+    }
+    
+    .auth-card {
+        background: rgba(255, 255, 255, 0.1) !important;
+        backdrop-filter: blur(20px) !important;
+        border-radius: 20px !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        padding: 3rem !important;
+        box-shadow: 0 15px 35px rgba(138, 43, 226, 0.2) !important;
+        max-width: 400px;
+        width: 100%;
+    }
+    
+    .auth-title {
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    
+    .auth-title h1 {
+        font-size: 2.5rem !important;
+        margin: 0 !important;
+        background: linear-gradient(135deg, #FFFFFF, #E6D4FF);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .auth-title p {
+        color: rgba(255,255,255,0.8) !important;
+        margin: 0.5rem 0 0 0 !important;
+    }
+    
+    .auth-tabs {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+    
+    .auth-tab {
+        flex: 1;
+        text-align: center;
+        padding: 0.8rem;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff !important;
+    }
+    
+    .auth-tab.active {
+        background: linear-gradient(135deg, #7B2CBF, #5A189A);
+        color: white !important;
+    }
+    
+    .auth-form input {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        border-radius: 10px !important;
+        padding: 0.8rem 1rem !important;
+        color: white !important;
+        width: 100%;
+        margin-bottom: 1rem;
+    }
+    
+    .auth-form input::placeholder {
+        color: rgba(255, 255, 255, 0.6) !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -412,8 +458,59 @@ def weekly_perf_api(user_id):
     resp = requests.post(f"{API_URL}/weekly/report", json={"user_id": user_id})
     return safe_json(resp)
 
+def monthly_report_api(user_id):
+    """Get monthly progress data"""
+    resp = requests.post(f"{API_URL}/monthly/report", json={"user_id": user_id})
+    return safe_json(resp)
+
+def user_habits_history_api(user_id):
+    """Get user's habit completion history"""
+    resp = requests.post(f"{API_URL}/habits/history", json={"user_id": user_id})
+    return safe_json(resp)
+
+def reset_daily_habits_api(user_id):
+    """Reset habits for new day"""
+    resp = requests.post(f"{API_URL}/habits/reset-daily", json={"user_id": user_id})
+    return safe_json(resp)
+
 # -------------------------------
-# TIMER FUNCTIONS
+# DAILY HABIT MANAGEMENT
+# -------------------------------
+def initialize_daily_habits():
+    """Reset habits for new day and load fresh habits"""
+    if not st.session_state.user:
+        return
+    
+    today = datetime.now().date()
+    
+    # Check if we need to reset for a new day
+    if st.session_state.last_reset_date != today:
+        # Reset completed habits and load fresh habits
+        st.session_state.completed_habits = set()
+        st.session_state.deleted_habits = set()
+        st.session_state.active_timers = {}
+        st.session_state.today_habits = []
+        st.session_state.last_reset_date = today
+        
+        # Load fresh habits for today
+        load_fresh_habits()
+
+def load_fresh_habits():
+    """Load fresh habits for today - previous habits don't carry over"""
+    if st.session_state.user:
+        # Get today's habits from API
+        today_data = today_status_api(st.session_state.user["user_id"])
+        if today_data.get("success"):
+            st.session_state.today_habits = today_data["habits"]
+            
+            # Update completed habits set
+            st.session_state.completed_habits = set()
+            for habit in st.session_state.today_habits:
+                if habit.get("completed"):
+                    st.session_state.completed_habits.add(habit["habit_id"])
+
+# -------------------------------
+# TIMER & ALARM FUNCTIONS
 # -------------------------------
 def start_timer(habit_name, habit_id):
     st.session_state.active_timers[habit_id] = {
@@ -443,6 +540,61 @@ def stop_timer(habit_id):
         
         return duration
     return None
+
+def set_alarm(habit_name, alarm_time):
+    """Set an alarm for a specific habit"""
+    st.session_state.alarms[habit_name] = {
+        "alarm_time": alarm_time,
+        "triggered": False
+    }
+
+def check_alarms():
+    """Check if any alarms should go off"""
+    current_time = datetime.now().time()
+    triggered_alarms = []
+    
+    for habit_name, alarm in st.session_state.alarms.items():
+        if not alarm["triggered"] and current_time >= alarm["alarm_time"]:
+            play_alarm_sound()
+            st.session_state.alarm_history.append({
+                "habit_name": habit_name,
+                "alarm_time": alarm["alarm_time"],
+                "triggered_at": datetime.now()
+            })
+            alarm["triggered"] = True
+            triggered_alarms.append(habit_name)
+    
+    return triggered_alarms
+
+def play_alarm_sound():
+    """Play alarm sound using JavaScript"""
+    st.markdown("""
+    <script>
+    function playAlarm() {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.5);
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime + 1.0);
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 1.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 1.5);
+        } catch(e) {
+            console.log('Audio not supported:', e);
+        }
+    }
+    playAlarm();
+    </script>
+    """, unsafe_allow_html=True)
 
 def get_today_time_summary():
     today = datetime.now().date()
@@ -503,95 +655,319 @@ def render_beep():
     )
 
 # -------------------------------
-# AUTH PAGE
+# USER DATA FUNCTIONS
+# -------------------------------
+def load_user_data(user_id):
+    """Load user-specific data for charts and reports"""
+    try:
+        # Load user habits history
+        habits_data = user_habits_history_api(user_id)
+        if habits_data.get("success"):
+            st.session_state.user_habits_data = habits_data.get("habits", [])
+        
+        # Load monthly data
+        monthly_data = monthly_report_api(user_id)
+        if monthly_data.get("success"):
+            st.session_state.user_monthly_data = monthly_data.get("monthly_data", [])
+        
+    except Exception as e:
+        print(f"Error loading user data: {e}")
+
+def get_user_monthly_progress(user_id):
+    """Get user's actual monthly progress data"""
+    monthly_data = monthly_report_api(user_id)
+    if monthly_data.get("success"):
+        return monthly_data.get("monthly_data", [])
+    
+    # Fallback: Generate from user habits data
+    user_data = st.session_state.user_habits_data
+    if not user_data:
+        return []
+    
+    # Process user data to create monthly progress
+    today = datetime.now().date()
+    start_of_month = today.replace(day=1)
+    monthly_progress = []
+    
+    current = start_of_month
+    while current <= today:
+        # Calculate completion rate for this day from user data
+        day_habits = [h for h in user_data if h.get('date') == current.isoformat()]
+        if day_habits:
+            total = len(day_habits)
+            completed = sum(1 for h in day_habits if h.get('completed', False))
+            completion_rate = (completed / total * 100) if total > 0 else 0
+        else:
+            completion_rate = 0
+            
+        monthly_progress.append({
+            "date": current.strftime("%Y-%m-%d"),
+            "completion_rate": completion_rate,
+            "total_habits": len(day_habits),
+            "completed_habits": completed if day_habits else 0
+        })
+        current += timedelta(days=1)
+    
+    return monthly_progress
+
+def get_user_weekly_performance(user_id):
+    """Get detailed weekly performance based on real user data"""
+    user_data = st.session_state.user_habits_data
+    if not user_data:
+        return {"completion_pct": 0, "stars": 0, "daily_completion": []}
+    
+    today = datetime.now().date()
+    start_of_week = today - timedelta(days=today.weekday())
+    
+    # Get habits for this week
+    week_habits = []
+    daily_completion = []
+    
+    current = start_of_week
+    for i in range(7):
+        day_date = current + timedelta(days=i)
+        if day_date > today:
+            break
+            
+        day_habits = [h for h in user_data if h.get('date') == day_date.isoformat()]
+        if day_habits:
+            total = len(day_habits)
+            completed = sum(1 for h in day_habits if h.get('completed', False))
+            completion_rate = (completed / total * 100) if total > 0 else 0
+            week_habits.extend(day_habits)
+        else:
+            completion_rate = 0
+            
+        daily_completion.append({
+            "date": day_date,
+            "completion_rate": completion_rate,
+            "total_habits": len(day_habits) if day_habits else 0,
+            "completed_habits": completed if day_habits else 0
+        })
+    
+    # Calculate overall weekly completion
+    if week_habits:
+        total_habits = len(week_habits)
+        completed_habits = sum(1 for h in week_habits if h.get('completed', False))
+        completion_pct = (completed_habits / total_habits * 100) if total_habits > 0 else 0
+        stars = min(5, int(completion_pct / 20))
+    else:
+        completion_pct = 0
+        stars = 0
+    
+    return {
+        "completion_pct": completion_pct,
+        "stars": stars,
+        "total_habits": len(week_habits),
+        "completed_habits": completed_habits if week_habits else 0,
+        "daily_completion": daily_completion
+    }
+
+def get_user_habit_distribution():
+    """Get actual user habit distribution for pie chart"""
+    user_data = st.session_state.user_habits_data
+    if not user_data:
+        return {}
+    
+    # Get habits from current month
+    today = datetime.now().date()
+    start_of_month = today.replace(day=1)
+    month_habits = [h for h in user_data 
+                   if h.get('date') and datetime.strptime(h['date'], '%Y-%m-%d').date() >= start_of_month]
+    
+    habit_stats = {}
+    for habit in month_habits:
+        name = habit.get('name')
+        if name not in habit_stats:
+            habit_stats[name] = {'total': 0, 'completed': 0}
+        habit_stats[name]['total'] += 1
+        if habit.get('completed', False):
+            habit_stats[name]['completed'] += 1
+    
+    return habit_stats
+
+def get_today_habit_distribution():
+    """Get today's habit distribution for pie chart"""
+    today_habits = st.session_state.today_habits
+    if not today_habits:
+        return {"Completed": 0, "Pending": 0}
+    
+    completed = sum(1 for habit in today_habits if habit.get('completed', False))
+    pending = len(today_habits) - completed
+    
+    return {
+        "Completed": completed,
+        "Pending": pending
+    }
+
+# -------------------------------
+# CHART FUNCTIONS
+# -------------------------------
+def create_today_pie_chart(today_distribution):
+    """Create pie chart for today's habit distribution"""
+    if not today_distribution or (today_distribution["Completed"] == 0 and today_distribution["Pending"] == 0):
+        return None
+    
+    labels = ['Completed', 'Pending']
+    sizes = [today_distribution["Completed"], today_distribution["Pending"]]
+    colors = ['#4CAF50', '#FF8E53']
+    
+    fig, ax = plt.subplots(figsize=(6, 6))
+    wedges, texts, autotexts = ax.pie(
+        sizes, 
+        labels=labels,
+        autopct='%1.1f%%',
+        colors=colors,
+        startangle=90
+    )
+    
+    # Style the chart
+    plt.setp(autotexts, size=10, weight="bold", color="white")
+    plt.setp(texts, size=10, color="white")
+    ax.set_title("Today's Habit Completion", fontsize=14, fontweight='bold', color='white')
+    ax.set_facecolor('#0a0e27')
+    fig.patch.set_facecolor('#0a0e27')
+    
+    return fig
+
+def create_weekly_chart(weekly_data):
+    """Create weekly progress chart based on real user data"""
+    if not weekly_data or not weekly_data.get('daily_completion'):
+        return None
+    
+    days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    completion_rates = [day['completion_rate'] for day in weekly_data['daily_completion']]
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    bars = ax.bar(days[:len(completion_rates)], completion_rates, color='#FF8E53', alpha=0.8)
+    ax.set_xlabel('Day', fontsize=12, color='white')
+    ax.set_ylabel('Completion Rate (%)', fontsize=12, color='white')
+    ax.set_title('Your Weekly Performance', fontsize=14, fontweight='bold', color='white')
+    ax.set_ylim(0, 100)
+    ax.tick_params(colors='white')
+    ax.set_facecolor('#0a0e27')
+    fig.patch.set_facecolor('#0a0e27')
+    
+    # Add value labels on bars
+    for bar, value in zip(bars, completion_rates):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2, f'{value:.0f}%', 
+                ha='center', va='bottom', color='white', fontweight='bold')
+    
+    plt.tight_layout()
+    return fig
+
+def create_monthly_chart(monthly_data):
+    """Create monthly progress chart based on user data"""
+    if not monthly_data:
+        return None
+    
+    dates = [data['date'] for data in monthly_data]
+    completion_rates = [data['completion_rate'] for data in monthly_data]
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(dates, completion_rates, marker='o', linewidth=2, color='#8A2BE2', markersize=6)
+    ax.fill_between(dates, completion_rates, alpha=0.3, color='#8A2BE2')
+    ax.set_xlabel('Date', fontsize=12, color='white')
+    ax.set_ylabel('Completion Rate (%)', fontsize=12, color='white')
+    ax.set_title('Your Monthly Progress Trend', fontsize=14, fontweight='bold', color='white')
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(colors='white')
+    ax.set_facecolor('#0a0e27')
+    fig.patch.set_facecolor('#0a0e27')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    return fig
+
+# -------------------------------
+# AUTH PAGE (Original design with improved font colors)
 # -------------------------------
 def auth_page():
     apply_cartoon_styles()
-    logo_path = resolve_logo_path()
-    logo_color = get_logo_dominant_color(logo_path) if logo_path else "#6a4bff"
-    darkest_logo = darken_hex(logo_color, 0.5)
-
-    # Left panel: Welcome, switch to Register
-    st.markdown(f"""
-    <div class="auth-wrap">
-        <div class="auth-left" style="--logoDark: {darkest_logo}; background:{darkest_logo};">
-            <div class="corner"></div>
-            <h2>Hello, Welcome!</h2>
-            <p>Don't have an account?</p>
-            <div>
-                <button id="go-register" style="background:#ffffff; color:{darkest_logo}; padding:10px 16px; border:0; border-radius:10px; font-weight:700; cursor:pointer;">Register</button>
+    
+    st.markdown("""
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-title">
+                <h1>HabitHub</h1>
+                <p>Build fresh habits every day</p>
             </div>
-        </div>
-        <div class="auth-right">
-            <h3>{'Register' if st.session_state.auth_mode == 'register' else 'Login'}</h3>
-    </div>
-    </div>
     """, unsafe_allow_html=True)
-
-    # Wire up buttons using Streamlit buttons
-    colA, colB = st.columns([1,1])
-    with colA:
-        if st.button("I want to Register", key="swap_to_register"):
-            st.session_state.auth_mode = "register"
-            st.rerun()
-    with colB:
-        if st.button("I want to Login", key="swap_to_login"):
+    
+    # Tab selection
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔐 Sign In", use_container_width=True, 
+                    type="primary" if st.session_state.auth_mode == "login" else "secondary"):
             st.session_state.auth_mode = "login"
             st.rerun()
-
-    # Render the form card under the header to align with design
-    st.markdown('<div class="auth-wrap" style="margin-top: 0;">', unsafe_allow_html=True)
-    right_class = "auth-right bright" if st.session_state.auth_mode == "register" else "auth-right"
-    st.markdown(f'<div class="{right_class}">', unsafe_allow_html=True)
+    with col2:
+        if st.button("🚀 Register", use_container_width=True,
+                    type="primary" if st.session_state.auth_mode == "register" else "secondary"):
+            st.session_state.auth_mode = "register"
+            st.rerun()
+    
+    st.markdown("<div style='margin: 2rem 0;'></div>", unsafe_allow_html=True)
+    
     if st.session_state.auth_mode == "login":
-        login_email = st.text_input("Email", key="login_email")
-        login_password = st.text_input("Password", type="password", key="login_password")
-        if st.button("Login", key="login_btn", use_container_width=True):
-            if login_email and login_password:
-                result = login_api(login_email, login_password)
+        st.markdown("### Welcome Back")
+        email = st.text_input("Email", placeholder="Enter your email")
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        
+        if st.button("Sign In", use_container_width=True, type="primary"):
+            if email and password:
+                result = login_api(email, password)
                 if result.get("success"):
                     st.session_state.user = {
                         "user_id": result["user_id"],
                         "name": result["name"],
-                        "email": login_email
+                        "email": email
                     }
+                    # Initialize daily habits and load user data
+                    initialize_daily_habits()
+                    load_user_data(result["user_id"])
                     st.session_state.page = "home"
-                    st.success("Logged in")
+                    st.success("Welcome back! 🎉")
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Invalid credentials")
             else:
-                st.warning("Fill all fields")
+                st.warning("Please fill in all fields")
+    
     else:
-        reg_name = st.text_input("Name")
-        reg_email = st.text_input("Email")
-        reg_password = st.text_input("Password", type="password")
-        if st.button("Create Account", key="register_btn", use_container_width=True):
-            if reg_name and reg_email and reg_password:
-                result = register_api(reg_name, reg_email, reg_password)
+        st.markdown("### Create Account")
+        name = st.text_input("Full Name", placeholder="Enter your name")
+        email = st.text_input("Email", placeholder="Enter your email")
+        password = st.text_input("Password", type="password", placeholder="Create a password")
+        
+        if st.button("Create Account", use_container_width=True, type="primary"):
+            if name and email and password:
+                result = register_api(name, email, password)
                 if result.get("success"):
                     st.session_state.user = {
                         "user_id": result["user_id"],
                         "name": result["name"],
-                        "email": reg_email
+                        "email": email
                     }
                     st.session_state.page = "home"
-                    st.success("Welcome!")
+                    st.success("Welcome! 🎉")
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Registration failed")
             else:
-                st.warning("Fill all fields")
-    st.markdown('</div>', unsafe_allow_html=True)  # close auth-right
-    st.markdown('</div>', unsafe_allow_html=True)  # close auth-wrap
+                st.warning("Please fill in all fields")
+    
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 # -------------------------------
 # MAIN APP PAGES
 # -------------------------------
 def home_page():
     apply_cartoon_styles()
+    check_alarms()
+    initialize_daily_habits()
     
     # Animated greeting + date
     now = datetime.now()
@@ -608,17 +984,17 @@ def home_page():
     st.markdown(f"""
     <div class="fade-in">
         <div style="text-align:center; padding:1.5rem;">
-            <h1 style="font-size:2.2rem; margin:0; color:#3b3f5c;">
+            <h1 class="main-header">
                 {greeting}, {st.session_state.user['name']}!
             </h1>
         </div>
-        <div class="date-display slide-in" style="background:#fff; color:#3b3f5c;">
+        <div class="date-display slide-in">
             <h3 style="margin:0;">{today_str}</h3>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### Today's Progress")
+    st.markdown("### Today's Fresh Start 🌟")
 
     # Get today's status
     today_data = today_status_api(st.session_state.user["user_id"])
@@ -639,91 +1015,102 @@ def home_page():
             with cols[0]:
                 st.markdown(f"""
                 <div class="metric-card">
-                    <h3>Progress</h3>
-                    <h2>{completed_habits}/{total_habits}</h2>
+                    <div style="font-size: 0.9rem; opacity: 0.8;">Today's Progress</div>
+                    <div style="font-size: 2rem; font-weight: bold;">{completed_habits}/{total_habits}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with cols[1]:
                 progress = (completed_habits/total_habits*100) if total_habits > 0 else 0
                 st.markdown(f"""
                 <div class="metric-card">
-                    <h3>Completion Rate</h3>
-                    <h2>{progress:.0f}%</h2>
+                    <div style="font-size: 0.9rem; opacity: 0.8;">Completion</div>
+                    <div style="font-size: 2rem; font-weight: bold;">{progress:.0f}%</div>
                 </div>
                 """, unsafe_allow_html=True)
             with cols[2]:
+                # Get yesterday's completion from real data
+                yesterday = (datetime.now() - timedelta(days=1)).date()
+                user_data = st.session_state.user_habits_data
+                yesterday_habits = [h for h in user_data if h.get('date') == yesterday.isoformat()]
+                if yesterday_habits:
+                    total_yesterday = len(yesterday_habits)
+                    completed_yesterday = sum(1 for h in yesterday_habits if h.get('completed', False))
+                    yesterday_completion = (completed_yesterday / total_yesterday * 100) if total_yesterday > 0 else 0
+                else:
+                    yesterday_completion = 0
+                
                 st.markdown(f"""
                 <div class="metric-card">
-                    <h3>Remaining</h3>
-                    <h2>{total_habits - completed_habits}</h2>
+                    <div style="font-size: 0.9rem; opacity: 0.8;">Yesterday</div>
+                    <div style="font-size: 2rem; font-weight: bold;">{yesterday_completion:.0f}%</div>
                 </div>
                 """, unsafe_allow_html=True)
 
             st.progress(progress/100)
             
-            # Show completion message (no balloons)
+            # Show completion message
             if completed_habits == total_habits and total_habits > 0:
-                st.success("All done for today!")
+                st.success("🎉 Perfect! All habits completed for today!")
             elif completed_habits > 0:
-                st.info(f"Great job! You've completed {completed_habits} today.")
+                st.info(f"Great progress! {completed_habits} habits completed.")
         else:
-            st.markdown("""
-            <div class="cartoon-card" style="text-align:center;">
-                <h3>No habits yet</h3>
-                <p>Add your first habit to get started.</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info("🌟 Add your first habit to start your daily journey!")
     else:
         st.error("❌ Could not load today's status")
 
 def add_habit_page():
     apply_cartoon_styles()
-    st.markdown('<div style="display:flex; justify-content:center;">', unsafe_allow_html=True)
-    st.markdown('<div class="cartoon-card" style="max-width:520px; width:100%">', unsafe_allow_html=True)
+    initialize_daily_habits()
+    
     st.markdown("### Add New Habit")
-    habit_name = st.text_input("Habit Name", placeholder="e.g., Morning Run")
-    habit_description = st.text_area("Description (optional)", placeholder="Add notes or goals…")
-    target_minutes = st.number_input("Planned Time (minutes)", min_value=5, max_value=600, step=5, value=30)
-    if st.button("Save Habit", use_container_width=True):
-        if habit_name.strip():
-            # capture ids before
-            before_ids = set([h.get("habit_id") for h in list_habits_api(st.session_state.user["user_id"])])
-            result = add_habit_api(habit_name, habit_description, st.session_state.user["user_id"])
-            if result.get("success"):
-                st.session_state.show_success = True
-                st.success("Habit added")
-                # map new habit id to target seconds
-                new_list = list_habits_api(st.session_state.user["user_id"]) or []
-                after_ids = set([h.get("habit_id") for h in new_list])
-                new_ids = list(after_ids - before_ids)
-                mapped = False
-                for h in new_list:
-                    if h.get("habit_id") in new_ids or h.get("name") == habit_name:
-                        st.session_state.habit_targets[h["habit_id"]] = int(target_minutes) * 60
-                        mapped = True
-                        break
-                if not mapped and new_list:
-                    st.session_state.habit_targets[new_list[-1]["habit_id"]] = int(target_minutes) * 60
-                time.sleep(1)
-                st.rerun()
+    
+    with st.container():
+        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
+        
+        habit_name = st.text_input("Habit Name", placeholder="What habit do you want to build?")
+        habit_description = st.text_area("Description (optional)", placeholder="Add some motivation...", height=80)
+        target_minutes = st.number_input("Target Time (minutes)", min_value=1, max_value=240, value=25)
+        
+        # Alarm section
+        st.markdown("### ⏰ Set Alarm")
+        use_alarm = st.checkbox("Add alarm reminder")
+        
+        if use_alarm:
+            alarm_time = st.time_input("Alarm time", value=datetime.now().time())
+            st.info(f"Alarm will ring at {alarm_time.strftime('%I:%M %p')}")
+        
+        if st.button("Create Habit", use_container_width=True, type="primary"):
+            if habit_name.strip():
+                result = add_habit_api(habit_name, habit_description, st.session_state.user["user_id"])
+                if result.get("success"):
+                    if use_alarm:
+                        set_alarm(habit_name, alarm_time)
+                        st.success(f"Habit created! 🎉 Alarm set for {alarm_time.strftime('%I:%M %p')}")
+                    else:
+                        st.success("Habit created! 🌟")
+                    
+                    # Reload user data and refresh today's habits
+                    load_user_data(st.session_state.user["user_id"])
+                    load_fresh_habits()
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Failed to create habit")
             else:
-                st.error("Failed to add habit")
-        else:
-            st.warning("Please enter a habit name")
-    st.markdown('</div>', unsafe_allow_html=True)
+                st.warning("Please enter a habit name")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def my_habits_page():
     apply_cartoon_styles()
-    st.markdown("# Today's Habits")
+    check_alarms()
+    initialize_daily_habits()
     
-    # Refresh today's habits
-    today_data = today_status_api(st.session_state.user["user_id"])
-    if today_data.get("success"):
-        st.session_state.today_habits = today_data["habits"]
+    st.markdown("# Today's Fresh Habits")
     
     habits = st.session_state.today_habits
     if not habits:
-        st.info("No active habits for today.")
+        st.info("No habits for today. Add some habits to get started! 🌟")
         return
     
     for habit in habits:
@@ -733,72 +1120,62 @@ def my_habits_page():
         completed = habit.get("completed", False)
         timer_active = habit["habit_id"] in st.session_state.active_timers
         
+        # Check if alarm is set for this habit
+        has_alarm = habit["name"] in st.session_state.alarms
+        
         bubble_class = "habit-bubble habit-completed" if completed else "habit-bubble"
         if timer_active:
             bubble_class += " timer-active"
+        if has_alarm:
+            bubble_class += " alarm-active"
         
         st.markdown(f'<div class="{bubble_class}">', unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([3, 1, 1])
+        col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
         
         with col1:
-            st.write(f"#### {habit['name']}")
+            st.write(f"**{habit['name']}**")
             if habit.get("description"):
                 st.write(f"_{habit['description']}_")
             if completed:
-                st.markdown("##### Completed")
+                st.write("✅ **Completed**")
             if timer_active:
-                start_time = st.session_state.active_timers[habit["habit_id"]]["start_time"]
-                elapsed = datetime.now() - start_time
-                target = st.session_state.habit_targets.get(habit["habit_id"]) 
-                if target:
-                    acc_before = get_accumulated_seconds_today(habit["habit_id"])  # time logged today (excluding current run)
-                    remaining = max(0, target - (acc_before + int(elapsed.total_seconds())))
-                    st.markdown(f"##### Timer: {format_time(elapsed.total_seconds())} • Left: {format_time(remaining)}")
-                else:
-                    st.markdown(f"##### Timer: {format_time(elapsed.total_seconds())}")
+                timer_data = st.session_state.active_timers[habit["habit_id"]]
+                elapsed = datetime.now() - timer_data["start_time"]
+                st.write(f"⏱️ **Timer:** {format_time(elapsed.total_seconds())}")
+            if has_alarm:
+                alarm_time = st.session_state.alarms[habit["name"]]["alarm_time"]
+                st.write(f"⏰ **Alarm:** {alarm_time.strftime('%I:%M %p')}")
         
         with col2:
             if not completed:
-                if habit["habit_id"] in st.session_state.active_timers:
+                if timer_active:
                     if st.button("Stop", key=f"stop_{habit['habit_id']}", use_container_width=True):
                         duration = stop_timer(habit["habit_id"])
                         if duration:
-                            elapsed_secs = int(duration.total_seconds())
-                            target = st.session_state.habit_targets.get(habit["habit_id"]) 
-                            acc = get_accumulated_seconds_today(habit["habit_id"])  # includes new stop
-                            # above function sums after stop because we append to history in stop_timer
-                            if target and acc < target:
-                                remaining = target - acc
-                                st.warning(f"Keep going — remaining {format_time(remaining)}")
-                            elif target and acc >= target:
-                                st.success("Target met for today!")
-                                render_beep()
-                            else:
-                                st.info(f"Timer stopped. Time spent: {format_time(elapsed_secs)}")
-                            time.sleep(1)
-                            st.rerun()
+                            complete_habit_in_db(habit["habit_id"], int(duration.total_seconds()))
+                            load_fresh_habits()  # Refresh today's habits
+                        st.rerun()
                 else:
-                    if st.button("Start Timer", key=f"start_{habit['habit_id']}", use_container_width=True, type="secondary"):
+                    if st.button("Start", key=f"start_{habit['habit_id']}", use_container_width=True):
                         start_timer(habit["name"], habit["habit_id"])
-                        st.success(f"Timer started for {habit['name']}")
-                        time.sleep(1)
                         st.rerun()
         
         with col3:
-            if not completed:
-                if st.button("Complete", key=f"comp_{habit['habit_id']}", use_container_width=True):
-                    res = complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
-                    if res.get("success"):
-                        st.session_state.completed_habits.add(habit["habit_id"])
-                        st.success("Habit marked completed")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Failed to complete habit")
-            
+            if not completed and not timer_active:
+                if st.button("Complete", key=f"comp_{habit['habit_id']}", use_container_width=True, type="primary"):
+                    complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                    load_fresh_habits()  # Refresh today's habits
+                    load_user_data(st.session_state.user["user_id"])  # Update charts
+                    st.success("Habit completed! 🎉")
+                    time.sleep(1)
+                    st.rerun()
+        
+        with col4:
             if st.button("Delete", key=f"del_{habit['habit_id']}", use_container_width=True):
                 remove_habit_api(habit["habit_id"], st.session_state.user["user_id"])
                 st.session_state.deleted_habits.add(habit["habit_id"])
+                load_fresh_habits()  # Refresh today's habits
+                load_user_data(st.session_state.user["user_id"])  # Update charts
                 st.success("Habit deleted")
                 time.sleep(1)
                 st.rerun()
@@ -807,35 +1184,15 @@ def my_habits_page():
 
 def today_status_page():
     apply_cartoon_styles()
-    st.markdown("# Today's Status")
+    initialize_daily_habits()
     
-    # Time tracking summary
-    # Show summary only at end of day
-    now = datetime.now()
-    if now.hour < 23:
-        st.info("Today's progress will be generated at the end of the day.")
-        return
-    total_time, habit_time = get_today_time_summary()
+    st.markdown("# Today's Progress & Analytics")
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### Time Tracking Summary")
-        
-        if total_time > 0:
-            st.metric("Total Time Tracked Today", format_time(total_time))
-            
-            st.markdown("### Time by Activity")
-            for habit_name, time_seconds in habit_time.items():
-                st.write(f"**{habit_name}**: {format_time(time_seconds)}")
-        else:
-            st.info("No time tracked today.")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### Habit Completion Status")
+        st.markdown("### 📊 Today's Summary")
         
         today_data = today_status_api(st.session_state.user["user_id"])
         if today_data.get("success"):
@@ -843,107 +1200,129 @@ def today_status_page():
             completed_habits = today_data["completed_habits"]
             
             if total_habits > 0:
-                st.metric("Completed", completed_habits)
-                st.metric("Remaining", total_habits - completed_habits)
-                st.metric("Total Habits", total_habits)
+                progress = (completed_habits / total_habits) * 100
                 
-                progress = completed_habits / total_habits
-                st.progress(progress)
+                st.metric("Completed Habits", f"{completed_habits}/{total_habits}")
+                st.metric("Completion Rate", f"{progress:.1f}%")
+                st.progress(progress/100)
                 
-                # Motivational messages (no balloons)
-                if progress == 1:
-                    st.success("All habits completed today")
-                elif progress >= 0.8:
-                    st.success("Great work — almost there")
-                elif progress >= 0.5:
-                    st.info("Good progress — halfway there")
-                elif progress > 0:
-                    st.info("Good start — keep going")
-                else:
-                    st.info("🌱 Ready to begin your adventure? You've got this!")
+                # Today's pie chart
+                today_distribution = get_today_habit_distribution()
+                st.markdown("#### Today's Distribution")
+                fig = create_today_pie_chart(today_distribution)
+                if fig:
+                    st.pyplot(fig)
+                
+                # Time tracking summary
+                total_time, habit_time = get_today_time_summary()
+                if total_time > 0:
+                    st.metric("Total Time Tracked", format_time(total_time))
             else:
-                st.info("No habits for today.")
+                st.info("No habits for today. Add some habits to see your progress!")
         else:
             st.error("❌ Could not load today's status")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
+        st.markdown("### 📈 Your Monthly Progress")
+        
+        # Get user's actual monthly data
+        monthly_data = get_user_monthly_progress(st.session_state.user["user_id"])
+        if monthly_data:
+            # Create monthly chart
+            fig = create_monthly_chart(monthly_data)
+            if fig:
+                st.pyplot(fig)
+            
+            # Show monthly stats based on actual user data
+            current_month = datetime.now().strftime("%B")
+            avg_completion = sum(day['completion_rate'] for day in monthly_data) / len(monthly_data)
+            best_day = max(monthly_data, key=lambda x: x['completion_rate'])
+            
+            st.metric(f"Your Average ({current_month})", f"{avg_completion:.1f}%")
+            st.metric("Your Best Day", f"{best_day['completion_rate']}% on {best_day['date']}")
+        else:
+            st.info("Track your habits to see monthly progress!")
         st.markdown('</div>', unsafe_allow_html=True)
 
 def weekly_perf_page():
     apply_cartoon_styles()
-    st.markdown("# Weekly Report")
-    # Only generate weekly report at end of week (Sunday)
-    if datetime.now().date().weekday() != 6:
-        st.info("Weekly report will be available on Sunday.")
-        return
+    initialize_daily_habits()
+    
+    st.markdown("# Weekly Report & Analytics")
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        data = weekly_perf_api(st.session_state.user["user_id"])
-        if data and data.get("success"):
+        st.markdown("### 🏆 Your Weekly Performance")
+        
+        # Get user's actual weekly data
+        weekly_data = get_user_weekly_performance(st.session_state.user["user_id"])
+        if weekly_data:
             cols = st.columns(2)
             with cols[0]:
-                st.metric("🏆 Completion %", f"{data.get('completion_pct',0)}%")
+                st.metric("Your Completion %", f"{weekly_data.get('completion_pct',0):.1f}%")
             with cols[1]:
-                st.metric("⭐ Stars Earned", f"{data.get('stars',0)}/5")
+                st.metric("Stars Earned", f"{weekly_data.get('stars',0)}/5")
             
-            # Fun achievement messages
-            stars = data.get('stars', 0)
+            # Create weekly chart based on real data
+            completion_rates = [day['completion_rate'] for day in weekly_data['daily_completion']]
+            fig = create_weekly_chart(weekly_data)
+            if fig:
+                st.pyplot(fig)
+            
+            # Show daily breakdown
+            st.markdown("#### Daily Breakdown")
+            for day in weekly_data['daily_completion']:
+                st.write(f"**{day['date'].strftime('%A')}**: {day['completed_habits']}/{day['total_habits']} habits ({day['completion_rate']:.1f}%)")
+            
+            # Achievement messages based on actual performance
+            stars = weekly_data.get('stars', 0)
             if stars == 5:
-                st.success("Perfect week — well done!")
+                st.success("🌟 Perfect week — you're a habit superstar!")
             elif stars >= 4:
-                st.success("Amazing performance!")
+                st.success("🎯 Amazing performance — keep up the great work!")
             elif stars >= 3:
-                st.info("Great job — keep it up")
+                st.info("💪 Solid week — you're building strong habits!")
             elif stars >= 2:
-                st.info("Good progress — every day counts")
+                st.info("📈 Good progress — every day counts!")
             else:
-                st.info("Getting started — next week will be better")
+                st.info("🌱 Getting started — next week will be even better!")
         else:
-            st.info("📊 No weekly data yet. Complete some quests first!")
+            st.info("📊 Complete some habits to see your weekly performance!")
         st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
         st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### 📊 Weekly Time Distribution")
+        st.markdown("### 📊 Your Habit Analytics")
         
-        # Get this week's timer data
-        today = datetime.now().date()
-        start_of_week = today - timedelta(days=today.weekday())
-        week_sessions = [session for session in st.session_state.timer_history 
-                        if session["date"] >= start_of_week]
-        
-        if week_sessions:
-            # Group by habit
-            habit_time_week = {}
-            for session in week_sessions:
-                habit_name = session["habit_name"]
-                if habit_name not in habit_time_week:
-                    habit_time_week[habit_name] = 0
-                habit_time_week[habit_name] += session["duration"].total_seconds()
+        # Get user's actual habit distribution
+        habit_stats = get_user_habit_distribution()
+        if habit_stats:
+            # Show habit statistics
+            st.markdown("#### Your Top Habits This Month")
+            for habit_name, stats in list(habit_stats.items())[:5]:  # Show top 5
+                completion_rate = (stats['completed'] / stats['total'] * 100) if stats['total'] > 0 else 0
+                st.write(f"**{habit_name}**: {stats['completed']}/{stats['total']} completed ({completion_rate:.1f}%)")
             
-            # Create pie chart
-            if habit_time_week:
-                fig, ax = plt.subplots(figsize=(8, 6))
-                colors = ['#FF8E53', '#FE6B8B', '#8A2BE2', '#9370DB', '#FFD700']
-                wedges, texts, autotexts = ax.pie(
-                    list(habit_time_week.values()), 
-                    labels=list(habit_time_week.keys()),
-                    autopct='%1.1f%%',
-                    colors=colors[:len(habit_time_week)],
-                    startangle=90
-                )
-                
-                # Style the chart
-                plt.setp(autotexts, size=10, weight="bold", color="white")
-                plt.setp(texts, size=10)
-                ax.set_title('Time Spent on Activities This Week', fontsize=14, fontweight='bold', color='#333333')
-                
-                st.pyplot(fig)
-            else:
-                st.info("⏰ No time data for this week yet.")
+            # Weekly comparison
+            st.markdown("#### Week Over Week")
+            current_week = get_user_weekly_performance(st.session_state.user["user_id"])
+            last_week_date = datetime.now().date() - timedelta(days=7)
+            # In a real app, you'd fetch last week's data from the database
+            
+            if current_week['completion_pct'] > 0:
+                st.metric("This Week's Completion", f"{current_week['completion_pct']:.1f}%")
         else:
-            st.info("📈 Start using timers to see your weekly time distribution!")
+            st.info("Add and complete habits to see your analytics!")
+        
+        # Alarm history
+        if st.session_state.alarm_history:
+            st.markdown("### 🔔 Recent Alarms")
+            for alarm in st.session_state.alarm_history[-5:]:  # Show last 5 alarms
+                st.write(f"**{alarm['habit_name']}** - {alarm['triggered_at'].strftime('%I:%M %p')}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------------
@@ -961,7 +1340,7 @@ def main():
     st.sidebar.markdown(f"""
     <div class="cartoon-card" style="text-align:center;">
         <h3>👋 Hello, {st.session_state.user['name']}!</h3>
-        <p>Ready for today's adventure? 🎯</p>
+        <p>Fresh start every day! ✨</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -972,6 +1351,14 @@ def main():
             elapsed = datetime.now() - timer_data["start_time"]
             st.sidebar.info(f"**{timer_data['habit_name']}**\n\n{format_time(elapsed.total_seconds())}")
     
+    # Active alarms in sidebar
+    active_alarms = [name for name, alarm in st.session_state.alarms.items() if not alarm["triggered"]]
+    if active_alarms:
+        st.sidebar.markdown("### ⏰ Active Alarms")
+        for alarm_name in active_alarms:
+            alarm_time = st.session_state.alarms[alarm_name]["alarm_time"]
+            st.sidebar.warning(f"**{alarm_name}**\n{alarm_time.strftime('%I:%M %p')}")
+    
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.user = None
         st.session_state.page = "auth"
@@ -981,20 +1368,23 @@ def main():
         st.session_state.active_timers = {}
         st.session_state.timer_history = []
         st.session_state.welcome_shown = False
+        st.session_state.alarms = {}
+        st.session_state.alarm_history = []
+        st.session_state.user_habits_data = []
+        st.session_state.user_monthly_data = []
+        st.session_state.last_reset_date = None
         st.rerun()
     
     st.sidebar.markdown("### Navigation")
     pages = {
-        "Home": home_page,
-        "Today's Habits": my_habits_page,
-        "Add Habit": add_habit_page,
-        "Today's Progress": today_status_page,
-        "Weekly Report": weekly_perf_page
+        "🏠 Home": home_page,
+        "📝 Today's Habits": my_habits_page,
+        "➕ Add Habit": add_habit_page,
+        "📊 Today's Progress": today_status_page,
+        "📈 Weekly Report": weekly_perf_page
     }
-    choice = st.sidebar.radio("Choose:", list(pages.keys()), key="nav_choice")
+    choice = st.sidebar.radio("Go to:", list(pages.keys()))
     pages[choice]()
-
-# FAB removed
 
 if __name__ == "__main__":
     main()
