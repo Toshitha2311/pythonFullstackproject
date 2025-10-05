@@ -1,20 +1,28 @@
 import streamlit as st
 import requests
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import time
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
 import base64
 import numpy as np
+import math
 import threading
 import pygame
+import calendar
+import sqlite3
+import pickle
 
 API_URL = "http://127.0.0.1:8000"
 
 # Initialize pygame mixer
-pygame.mixer.init()
+try:
+    pygame.mixer.init()
+    PYGAME_AVAILABLE = True
+except:
+    PYGAME_AVAILABLE = False
 
 # Set page config must be the first Streamlit command
 st.set_page_config(
@@ -23,6 +31,80 @@ st.set_page_config(
     page_icon="🎯",
     initial_sidebar_state="expanded"
 )
+
+# -------------------------------
+# PERSISTENT ALARM STORAGE
+# -------------------------------
+def init_alarm_database():
+    """Initialize SQLite database for persistent alarm storage"""
+    conn = sqlite3.connect('alarms.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS alarms
+        (user_id TEXT, habit_name TEXT, alarm_data BLOB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_alarms_to_db(user_id, alarms):
+    """Save alarms to persistent database"""
+    try:
+        conn = sqlite3.connect('alarms.db')
+        c = conn.cursor()
+        
+        # Delete existing alarms for this user
+        c.execute("DELETE FROM alarms WHERE user_id = ?", (user_id,))
+        
+        # Save new alarms
+        for habit_name, alarm_data in alarms.items():
+            # Convert datetime objects to strings for serialization
+            serializable_alarm = {
+                'habit_name': alarm_data['habit_name'],
+                'alarm_time': alarm_data['alarm_time'].strftime('%H:%M:%S'),
+                'triggered': alarm_data.get('triggered', False),
+                'recurring': alarm_data.get('recurring', True),
+                'days': alarm_data.get('days', ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+            }
+            c.execute("INSERT INTO alarms (user_id, habit_name, alarm_data) VALUES (?, ?, ?)",
+                     (user_id, habit_name, pickle.dumps(serializable_alarm)))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error saving alarms to DB: {e}")
+        return False
+
+def load_alarms_from_db(user_id):
+    """Load alarms from persistent database"""
+    try:
+        conn = sqlite3.connect('alarms.db')
+        c = conn.cursor()
+        c.execute("SELECT habit_name, alarm_data FROM alarms WHERE user_id = ?", (user_id,))
+        rows = c.fetchall()
+        conn.close()
+        
+        alarms = {}
+        for habit_name, alarm_blob in rows:
+            alarm_data = pickle.loads(alarm_blob)
+            # Convert string time back to time object
+            alarm_time = datetime.strptime(alarm_data['alarm_time'], '%H:%M:%S').time()
+            
+            alarms[habit_name] = {
+                'habit_name': alarm_data['habit_name'],
+                'alarm_time': alarm_time,
+                'triggered': alarm_data.get('triggered', False),
+                'recurring': alarm_data.get('recurring', True),
+                'days': alarm_data.get('days', ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+            }
+        
+        return alarms
+    except Exception as e:
+        print(f"Error loading alarms from DB: {e}")
+        return {}
+
+# Initialize database on startup
+init_alarm_database()
 
 # -------------------------------
 # SESSION STATE INIT
@@ -66,9 +148,79 @@ if "weekly_stars" not in st.session_state:
 if "last_alarm_check" not in st.session_state:
     st.session_state.last_alarm_check = None
 if "user_alarms" not in st.session_state:
-    st.session_state.user_alarms = {}  # Persistent alarms per user
+    st.session_state.user_alarms = {}
 if "alarm_threads" not in st.session_state:
     st.session_state.alarm_threads = {}
+if "alarms_initialized" not in st.session_state:
+    st.session_state.alarms_initialized = False
+if "last_alarm_trigger" not in st.session_state:
+    st.session_state.last_alarm_trigger = {}
+
+# -------------------
+# DAILY RESET LOGIC (ENHANCED)
+# -------------------
+def initialize_daily_habits():
+    """Reset habits for new day and load fresh habits"""
+    if not st.session_state.user:
+        return
+    
+    today = datetime.now().date()
+
+    if "last_reset_date" not in st.session_state:
+        # first load
+        st.session_state.last_reset_date = today
+        st.session_state.today_habits = []
+        st.session_state.deleted_habits = set()
+
+    # if new day → reset
+    if st.session_state.last_reset_date != today:
+        st.session_state.today_habits = []
+        st.session_state.deleted_habits = set()
+        st.session_state.last_reset_date = today
+        st.session_state.completed_habits = set()
+        st.session_state.active_timers = {}
+        
+        # Load fresh habits for today
+        load_fresh_habits()
+
+
+def load_fresh_habits():
+    """Load fresh habits for today - previous habits don't carry over"""
+    if st.session_state.user:
+        # Get today's habits from API - this should only return current user's habits
+        today_data = today_status_api(st.session_state.user["user_id"])
+        if today_data.get("success"):
+            # Filter habits to ensure only current user's habits are shown
+            user_habits = [habit for habit in today_data["habits"]]
+            st.session_state.today_habits = user_habits
+            
+            # Update completed habits set
+            st.session_state.completed_habits = set()
+            for habit in st.session_state.today_habits:
+                if habit.get("completed"):
+                    st.session_state.completed_habits.add(habit["habit_id"])
+
+def add_habit_api(habit_name, habit_description, user_id, target_minutes):
+    # Just keep in memory for today
+    habit_id = len(st.session_state.today_habits) + 1
+    st.session_state.today_habits.append({
+        "habit_id": habit_id,
+        "name": habit_name,
+        "description": habit_description,
+        "target_minutes": target_minutes,
+        "completed": False
+    })
+    return {"success": True}
+
+
+def complete_habit_api(habit_id, user_id):
+    for habit in st.session_state.today_habits:
+        if habit["habit_id"] == habit_id:
+            habit["completed"] = True
+
+
+def remove_habit_api(habit_id, user_id):
+    st.session_state.today_habits = [h for h in st.session_state.today_habits if h["habit_id"] != habit_id]
 
 # -------------------------------
 # CARTOON STYLING WITH ORANGE/VIOLET/WHITE THEME
@@ -213,6 +365,32 @@ def apply_cartoon_styles():
     .star-empty {
         color: #666666;
     }
+    
+    .day-pill {
+        display: inline-block;
+        padding: 4px 12px;
+        margin: 2px;
+        border-radius: 20px;
+        background: rgba(147, 124, 255, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 0.8rem;
+        color: white;
+    }
+    
+    .day-pill.active {
+        background: linear-gradient(45deg, #FF416C, #FF4B2B);
+        border: 1px solid #FFFFFF;
+    }
+    
+    .auto-refresh-info {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        padding: 10px;
+        margin: 10px 0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        font-size: 0.8rem;
+        text-align: center;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -235,7 +413,7 @@ def login_api(email, password):
                         json={"email": email, "password": password})
     return safe_json(resp)
 
-def add_habit_api(name, desc, user_id, target_minutes=25):
+def add_habit_api_backend(name, desc, user_id, target_minutes=25):
     resp = requests.post(f"{API_URL}/habit/add", 
                         json={"name": name, "description": desc, "user_id": user_id, "target_minutes": target_minutes})
     return safe_json(resp)
@@ -245,12 +423,12 @@ def list_habits_api(user_id):
     data = safe_json(resp)
     return data.get("habits", []) if data.get("success") else []
 
-def complete_habit_api(hid, user_id):
+def complete_habit_api_backend(hid, user_id):
     resp = requests.post(f"{API_URL}/habit/complete", 
                         json={"habit_id": hid, "user_id": user_id})
     return safe_json(resp)
 
-def remove_habit_api(hid, user_id):
+def remove_habit_api_backend(hid, user_id):
     resp = requests.post(f"{API_URL}/habit/remove", 
                         json={"habit_id": hid, "user_id": user_id})
     return safe_json(resp)
@@ -264,174 +442,154 @@ def weekly_perf_api(user_id):
     return safe_json(resp)
 
 # -------------------------------
-# ALARM FUNCTIONS (PYGAME BASED)
+# ENHANCED ALARM FUNCTIONS
 # -------------------------------
 def play_alarm_sound():
-    """Play alarm sound using pygame."""
-    try:
-        # Create a simple beep sound using pygame
-        pygame.mixer.init()
-        sample_rate = 44100
-        duration = 1000  # milliseconds
-        frequency = 800  # Hz
-        
-        # Generate beep sound
-        n_samples = int(round(duration * 0.001 * sample_rate))
-        buf = numpy.zeros((n_samples, 2), dtype=numpy.int16)
-        max_sample = 2**(16 - 1) - 1
-        for s in range(n_samples):
-            t = float(s) / sample_rate
-            buf[s][0] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
-            buf[s][1] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
-        
-        sound = pygame.sndarray.make_sound(buf)
-        sound.play()
-        pygame.time.wait(duration)
-        
-    except Exception as e:
-        # Fallback to JavaScript if pygame fails
-        st.markdown("""
-        <script>
-        function playAlarmSound() {
+    """Play alarm sound using JavaScript for reliability"""
+    st.markdown("""
+    <script>
+    function playAlarmSound() {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            const startTime = audioContext.currentTime;
+            
+            // First high-pitched beep
+            oscillator.frequency.setValueAtTime(800, startTime);
+            gainNode.gain.setValueAtTime(0.8, startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.3);
+            
+            // Second medium-pitched beep
+            oscillator.frequency.setValueAtTime(600, startTime + 0.4);
+            gainNode.gain.setValueAtTime(0.8, startTime + 0.4);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.7);
+            
+            // Third high-pitched beep
+            oscillator.frequency.setValueAtTime(800, startTime + 0.8);
+            gainNode.gain.setValueAtTime(0.8, startTime + 0.8);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 1.1);
+            
+            oscillator.start(startTime);
+            oscillator.stop(startTime + 1.2);
+            
+        } catch(e) {
+            console.log('Web Audio failed:', e);
+            // Fallback: try to play a simple beep using HTML5 audio
             try {
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioContext.createOscillator();
-                const gainNode = audioContext.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                
-                const startTime = audioContext.currentTime;
-                
-                // First high-pitched beep
-                oscillator.frequency.setValueAtTime(800, startTime);
-                gainNode.gain.setValueAtTime(0.8, startTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.3);
-                
-                // Second medium-pitched beep
-                oscillator.frequency.setValueAtTime(600, startTime + 0.4);
-                gainNode.gain.setValueAtTime(0.8, startTime + 0.4);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 0.7);
-                
-                // Third high-pitched beep
-                oscillator.frequency.setValueAtTime(800, startTime + 0.8);
-                gainNode.gain.setValueAtTime(0.8, startTime + 0.8);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + 1.1);
-                
-                oscillator.start(startTime);
-                oscillator.stop(startTime + 1.2);
-                
-            } catch(e) {
-                console.log('Web Audio failed:', e);
+                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciMGK4bP8tiJNwoZbrvt559NEAxQp+PwtmMcBjiR1/LTfSwGH4LN9N2QQAoUXrTp66hVEAxOpeTyu2QcBjiP1/LTfSwGH4LN9N2QQAoUXrTp66hVEAxOpeTyu2QcBjiP1/LTfSwGH4LN9N2QQAoUXrTp66hVEAxOpeTyu2QcBjiP1/LTfSwGH4LN9N2QQAoUXrTp66hVEAxOpeTyu2QcBjiP1/LTfSw==');
+                audio.play();
+            } catch(e2) {
+                console.log('HTML5 audio also failed:', e2);
             }
         }
-        playAlarmSound();
-        </script>
-        """, unsafe_allow_html=True)
+    }
+    playAlarmSound();
+    </script>
+    """, unsafe_allow_html=True)
 
-def schedule_alarm(habit_name, alarm_time):
-    """Schedule alarm for today + repeat daily."""
-    def alarm_thread():
-        while True:
-            now = datetime.now()
-            current_time_str = now.time().strftime("%H:%M")
-            target_time_str = alarm_time.strftime("%H:%M")
+def check_alarms():
+    """Check if any alarms should trigger - with cooldown to prevent multiple triggers"""
+    now = datetime.now()
+    current_time = now.strftime("%H:%M")
+    current_day = calendar.day_name[now.weekday()]
+    
+    triggered = []
+    for habit_name, alarm in list(st.session_state.alarms.items()):
+        alarm_time = alarm["alarm_time"].strftime("%H:%M")
+        alarm_days = alarm.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        
+        # Check if it's the right day and time
+        if current_day in alarm_days and current_time == alarm_time:
+            # Check cooldown to prevent multiple triggers in the same minute
+            last_trigger = st.session_state.last_alarm_trigger.get(habit_name)
+            if last_trigger and (now - last_trigger).total_seconds() < 55:  # 55 second cooldown
+                continue
+                
+            triggered.append(habit_name)
+            st.session_state.last_alarm_trigger[habit_name] = now
             
-            if current_time_str == target_time_str:
-                st.toast(f"⏰ Alarm for '{habit_name}' is ringing!")
-                play_alarm_sound()
-                
-                # Record alarm history
-                st.session_state.alarm_history.append({
-                    "habit_name": habit_name,
-                    "alarm_time": alarm_time,
-                    "triggered_at": now
-                })
-                
-                time.sleep(60)  # wait 1 min so it doesn't keep firing
-            time.sleep(20)  # check every 20 sec
+            # Show notification
+            st.toast(f"🔔 Alarm for **{habit_name}**!", icon="⏰")
+            
+            # Play sound
+            play_alarm_sound()
+            
+            # Record in history
+            st.session_state.alarm_history.append({
+                "habit_name": habit_name,
+                "alarm_time": alarm["alarm_time"],
+                "triggered_at": now,
+                "days": alarm_days
+            })
+    
+    return triggered
 
-    # Run thread in background
-    t = threading.Thread(target=alarm_thread, daemon=True)
-    t.start()
-    return datetime.now().replace(
-        hour=alarm_time.hour, minute=alarm_time.minute, second=0, microsecond=0
-    )
-
-# -------------------------------
-# PERSISTENT ALARM MANAGEMENT
-# -------------------------------
-def save_user_alarms():
-    """Save alarms for the current user"""
+def set_alarm(habit_name, alarm_time, days=None):
+    """Set an alarm for a specific habit with weekly schedule and persist to database"""
+    if days is None:
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    
+    st.session_state.alarms[habit_name] = {
+        "habit_name": habit_name,
+        "alarm_time": alarm_time,
+        "triggered": False,
+        "recurring": True,
+        "days": days
+    }
+    
+    # Save alarms to persistent database
     if st.session_state.user:
-        user_id = st.session_state.user["user_id"]
-        # Convert datetime objects to strings for storage
-        alarms_to_save = {}
-        for habit_name, alarm in st.session_state.alarms.items():
-            alarms_to_save[habit_name] = {
-                "alarm_time": alarm["alarm_time"].strftime("%H:%M:%S"),
-                "triggered": alarm["triggered"],
-                "recurring": alarm["recurring"]
-            }
-        st.session_state.user_alarms[user_id] = alarms_to_save
+        save_alarms_to_db(st.session_state.user["user_id"], st.session_state.alarms)
+    
+    days_display = ", ".join(days) if days else "daily"
+    st.success(f"🔔 Alarm set for {habit_name} at {alarm_time.strftime('%I:%M %p')} on {days_display}!")
+    return alarm_time
+
+def remove_alarm(habit_name):
+    """Remove an alarm and save changes to database"""
+    if habit_name in st.session_state.alarms:
+        del st.session_state.alarms[habit_name]
+        # Update persistent storage
+        if st.session_state.user:
+            save_alarms_to_db(st.session_state.user["user_id"], st.session_state.alarms)
+        st.success(f"Alarm for {habit_name} removed!")
+        st.rerun()
 
 def load_user_alarms():
-    """Load alarms for the current user"""
+    """Load alarms for the current user from persistent storage"""
     if st.session_state.user:
         user_id = st.session_state.user["user_id"]
-        if user_id in st.session_state.user_alarms:
-            saved_alarms = st.session_state.user_alarms[user_id]
-            # Convert string times back to time objects and create datetime objects
-            for habit_name, alarm_data in saved_alarms.items():
-                alarm_time = datetime.strptime(alarm_data["alarm_time"], "%H:%M:%S").time()
-                
-                # Start the alarm thread for this alarm
-                schedule_alarm(habit_name, alarm_time)
-                
-                st.session_state.alarms[habit_name] = {
-                    "habit_name": habit_name,
-                    "alarm_time": alarm_time,
-                    "triggered": False,
-                    "recurring": alarm_data["recurring"]
-                }
+        # Load from database instead of session state
+        alarms_from_db = load_alarms_from_db(user_id)
+        st.session_state.alarms = alarms_from_db
 
 # -------------------------------
-# DAILY HABIT MANAGEMENT
+# AUTO-REFRESH MECHANISM
 # -------------------------------
-def initialize_daily_habits():
-    """Reset habits for new day and load fresh habits"""
-    if not st.session_state.user:
-        return
+def setup_auto_refresh():
+    """Set up automatic refresh to check alarms"""
+    # This creates a simple auto-refresh mechanism
+    st.markdown("""
+    <script>
+    // Auto-refresh the page every 60 seconds to check alarms
+    setTimeout(function() {
+        window.location.reload();
+    }, 60000);
+    </script>
+    """, unsafe_allow_html=True)
     
-    today = datetime.now().date()
-    
-    # Check if we need to reset for a new day
-    if st.session_state.last_reset_date != today:
-        # Reset completed habits and load fresh habits
-        st.session_state.completed_habits = set()
-        st.session_state.deleted_habits = set()
-        st.session_state.active_timers = {}
-        st.session_state.today_habits = []
-        st.session_state.last_reset_date = today
-        
-        # Load fresh habits for today
-        load_fresh_habits()
-
-def load_fresh_habits():
-    """Load fresh habits for today - previous habits don't carry over"""
-    if st.session_state.user:
-        # Get today's habits from API - this should only return current user's habits
-        today_data = today_status_api(st.session_state.user["user_id"])
-        if today_data.get("success"):
-            # Filter habits to ensure only current user's habits are shown
-            user_habits = [habit for habit in today_data["habits"]]
-            st.session_state.today_habits = user_habits
-            
-            # Update completed habits set
-            st.session_state.completed_habits = set()
-            for habit in st.session_state.today_habits:
-                if habit.get("completed"):
-                    st.session_state.completed_habits.add(habit["habit_id"])
+    # Show auto-refresh info
+    st.sidebar.markdown("""
+    <div class="auto-refresh-info">
+        🔄 Auto-refresh: 60s<br>
+        ⏰ Alarms work when tab is open
+    </div>
+    """, unsafe_allow_html=True)
 
 # -------------------------------
 # TIMER FUNCTIONS
@@ -466,32 +624,6 @@ def stop_timer(habit_id):
         
         return duration
     return None
-
-def set_alarm(habit_name, alarm_time):
-    """Set an alarm for a specific habit - PERSISTENT across logins"""
-    # Start the alarm thread
-    schedule_alarm(habit_name, alarm_time)
-    
-    st.session_state.alarms[habit_name] = {
-        "habit_name": habit_name,
-        "alarm_time": alarm_time,
-        "triggered": False,
-        "recurring": True
-    }
-    
-    # Save alarms for persistence
-    save_user_alarms()
-    
-    st.success(f"🔔 Alarm set for {habit_name} at {alarm_time.strftime('%I:%M %p')}!")
-    return alarm_time
-
-def remove_alarm(habit_name):
-    """Remove an alarm and save changes"""
-    if habit_name in st.session_state.alarms:
-        del st.session_state.alarms[habit_name]
-        save_user_alarms()
-        st.success(f"Alarm for {habit_name} removed!")
-        st.rerun()
 
 def play_completion_sound():
     """Play completion beep sound"""
@@ -577,7 +709,7 @@ def load_user_data(user_id):
     try:
         # Calculate weekly stars
         st.session_state.weekly_stars = calculate_weekly_stars()
-        # Load user's persistent alarms
+        # Load user's persistent alarms from database
         load_user_alarms()
         
     except Exception as e:
@@ -697,9 +829,9 @@ def auth_page():
                         "name": result["name"],
                         "email": email
                     }
-                    # Initialize daily habits and load user data (including alarms)
+                    # Initialize daily habits and load user data (including alarms from DB)
                     initialize_daily_habits()
-                    load_user_data(result["user_id"])
+                    load_user_data(result["user_id"])  # This now loads from database
                     st.session_state.page = "home"
                     st.success("Welcome back! 🎉")
                     time.sleep(1)
@@ -741,6 +873,9 @@ def auth_page():
 def home_page():
     apply_cartoon_styles()
     initialize_daily_habits()
+    
+    # Check alarms on every page load
+    triggered_alarms = check_alarms()
     
     # Animated greeting + date
     now = datetime.now()
@@ -825,9 +960,15 @@ def home_page():
     else:
         st.error("❌ Could not load today's status")
 
+# -------------------
+# ADD HABIT PAGE (ENHANCED WITH WEEKLY ALARMS)
+# -------------------
 def add_habit_page():
     apply_cartoon_styles()
     initialize_daily_habits()
+    
+    # Check alarms on every page load
+    triggered_alarms = check_alarms()
     
     st.markdown("### Add New Habit")
     
@@ -845,23 +986,37 @@ def add_habit_page():
         
         st.info(f"🎯 Target: {target_minutes} minutes per session")
         
-        # Alarm section
-        st.markdown("### ⏰ Set Daily Alarm")
-        use_alarm = st.checkbox("Add daily alarm reminder")
+        # Enhanced Alarm section with weekly scheduling
+        st.markdown("### ⏰ Set Weekly Alarm")
+        use_alarm = st.checkbox("Add weekly alarm reminder")
         
         if use_alarm:
-            # Default to current time + 5 minutes for convenience
-            default_time = (datetime.now() + timedelta(minutes=5)).time()
+            # Default to current time + 2 minutes for easy testing
+            default_time = (datetime.now() + timedelta(minutes=2)).time()
             alarm_time = st.time_input("Alarm time", value=default_time, key="alarm_time_picker")
             
-            if alarm_time:
-                alarm_datetime = set_alarm(habit_name, alarm_time)
-                st.info("Alarm will ring at this time every day and persist across logins")
+            # Day selection like in phone clocks
+            days_of_week = list(calendar.day_name)  # ["Monday", "Tuesday", ...]
+            selected_days = st.multiselect("Select Days for Alarm", days_of_week, default=days_of_week)
+            
+            if alarm_time and habit_name and selected_days:
+                # Display selected days as pills
+                days_html = "".join([f'<span class="day-pill active">{day[:3]}</span>' for day in selected_days])
+                st.markdown(f"**Selected Days:** {days_html}", unsafe_allow_html=True)
+                st.info(f"Alarm will ring at {alarm_time.strftime('%I:%M %p')} on selected days for '{habit_name}'")
         
         if st.button("Create Habit", use_container_width=True, type="primary"):
             if habit_name.strip():
+                # Use the local API for immediate UI update
                 result = add_habit_api(habit_name, habit_description, st.session_state.user["user_id"], target_minutes)
                 if result.get("success"):
+                    # Also sync with backend if needed
+                    backend_result = add_habit_api_backend(habit_name, habit_description, st.session_state.user["user_id"], target_minutes)
+                    
+                    # Set alarm if requested
+                    if use_alarm and alarm_time and habit_name and selected_days:
+                        set_alarm(habit_name, alarm_time, selected_days)
+                    
                     st.success("Habit created! 🌟")
                     
                     # Reload user data and refresh today's habits
@@ -876,9 +1031,15 @@ def add_habit_page():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
+# -------------------
+# MY HABITS PAGE (ENHANCED WITH WEEKLY ALARMS)
+# -------------------
 def my_habits_page():
     apply_cartoon_styles()
     initialize_daily_habits()
+    
+    # Check alarms on every page load
+    triggered_alarms = check_alarms()
     
     st.markdown("# Today's Fresh Habits")
     
@@ -936,13 +1097,20 @@ def my_habits_page():
                 if elapsed.total_seconds() >= target_seconds and not completed:
                     st.success("🎉 Target time reached! Habit completed!")
                     complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                    complete_habit_api_backend(habit["habit_id"], st.session_state.user["user_id"])
                     play_completion_sound()
                     load_fresh_habits()
                     st.rerun()
                     
             if has_alarm:
-                alarm_time = st.session_state.alarms[habit["name"]]["alarm_time"]
-                st.write(f"⏰ **Alarm:** {alarm_time.strftime('%I:%M %p')} daily")
+                alarm_info = st.session_state.alarms[habit["name"]]
+                alarm_time = alarm_info["alarm_time"]
+                days = alarm_info.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+                
+                # Display days as pills
+                days_display = "".join([f'<span class="day-pill active">{day[:3]}</span>' for day in days])
+                st.write(f"⏰ **Alarm:** {alarm_time.strftime('%I:%M %p')}")
+                st.markdown(f"**Days:** {days_display}", unsafe_allow_html=True)
         
         with col2:
             if not completed:
@@ -954,6 +1122,7 @@ def my_habits_page():
                             play_completion_sound()
                             # Auto-complete when timer stops
                             complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                            complete_habit_api_backend(habit["habit_id"], st.session_state.user["user_id"])
                             load_fresh_habits()
                         st.rerun()
                 else:
@@ -965,6 +1134,7 @@ def my_habits_page():
             if not completed and not timer_active:
                 if st.button("Complete", key=f"comp_{habit['habit_id']}", use_container_width=True, type="primary"):
                     complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                    complete_habit_api_backend(habit["habit_id"], st.session_state.user["user_id"])
                     play_completion_sound()
                     load_fresh_habits()
                     load_user_data(st.session_state.user["user_id"])
@@ -975,6 +1145,7 @@ def my_habits_page():
         with col4:
             if st.button("Delete", key=f"del_{habit['habit_id']}", use_container_width=True):
                 remove_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                remove_habit_api_backend(habit["habit_id"], st.session_state.user["user_id"])
                 st.session_state.deleted_habits.add(habit["habit_id"])
                 load_fresh_habits()
                 load_user_data(st.session_state.user["user_id"])
@@ -987,6 +1158,9 @@ def my_habits_page():
 def today_status_page():
     apply_cartoon_styles()
     initialize_daily_habits()
+    
+    # Check alarms on every page load
+    triggered_alarms = check_alarms()
     
     st.markdown("# Today's Progress")
     
@@ -1032,7 +1206,14 @@ def today_status_page():
             for alarm_name in active_alarms:
                 alarm_data = st.session_state.alarms[alarm_name]
                 alarm_time = alarm_data["alarm_time"]
-                st.write(f"**{alarm_name}**: {alarm_time.strftime('%I:%M %p')} daily")
+                days = alarm_data.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+                
+                # Display days as pills
+                days_display = "".join([f'<span class="day-pill active">{day[:3]}</span>' for day in days])
+                
+                st.write(f"**{alarm_name}**")
+                st.write(f"⏰ {alarm_time.strftime('%I:%M %p')}")
+                st.markdown(f"**Days:** {days_display}", unsafe_allow_html=True)
                 
                 # Add option to remove alarm
                 if st.button(f"Remove {alarm_name} alarm", key=f"remove_{alarm_name}"):
@@ -1053,6 +1234,9 @@ def today_status_page():
 def weekly_perf_page():
     apply_cartoon_styles()
     initialize_daily_habits()
+    
+    # Check alarms on every page load
+    triggered_alarms = check_alarms()
     
     st.markdown("# Weekly Report & Stars")
     
@@ -1142,6 +1326,12 @@ def main():
     
     apply_cartoon_styles()
     
+    # Check alarms on every app run
+    triggered_alarms = check_alarms()
+    
+    # Setup auto-refresh for alarm checking
+    setup_auto_refresh()
+    
     # Main app navigation for logged-in users
     st.sidebar.markdown(f"""
     <div class="cartoon-card" style="text-align:center;">
@@ -1171,8 +1361,15 @@ def main():
     if active_alarms:
         st.sidebar.markdown("### ⏰ Active Alarms")
         for alarm_name in active_alarms:
-            alarm_time = st.session_state.alarms[alarm_name]["alarm_time"]
-            st.sidebar.warning(f"**{alarm_name}**\n{alarm_time.strftime('%I:%M %p')} daily")
+            alarm_data = st.session_state.alarms[alarm_name]
+            alarm_time = alarm_data["alarm_time"]
+            days = alarm_data.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+            days_short = ", ".join([day[:3] for day in days])
+            st.sidebar.warning(f"**{alarm_name}**\n{alarm_time.strftime('%I:%M %p')}\nDays: {days_short}")
+    
+    # Add alarm status indicator
+    current_time = datetime.now().strftime("%H:%M:%S")
+    st.sidebar.markdown(f"*Last checked: {current_time}*")
     
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state.user = None
@@ -1188,6 +1385,8 @@ def main():
         st.session_state.user_monthly_data = []
         st.session_state.last_reset_date = None
         st.session_state.weekly_stars = 0
+        st.session_state.alarms = {}
+        st.session_state.last_alarm_trigger = {}
         st.rerun()
     
     st.sidebar.markdown("### Navigation")
