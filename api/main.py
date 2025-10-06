@@ -265,6 +265,7 @@ def daily_task():
     except Exception as e:
         print(f"Daily task error: {e}")
 
+
 def weekly_task():
     """
     Calculate weekly performance for all users on Sunday
@@ -274,17 +275,75 @@ def weekly_task():
             users_resp = db.supabase.table("users").select("user_id").execute()
             if users_resp.data:
                 for u in users_resp.data:
-                    # You can implement weekly analytics here
-                    print(f"Calculating weekly performance for user {u['user_id']}")
+                    # Calculate weekly performance
+                    user_id = u['user_id']
+                    weekly_performance = calculate_weekly_performance(user_id)
+                    
+                    # Store weekly report
+                    store_weekly_report(user_id, weekly_performance)
+                    print(f"Weekly performance calculated for user {user_id}: {weekly_performance}")
     except Exception as e:
         print(f"Weekly task error: {e}")
 
-# Schedule daily log generation at 00:01
+def calculate_weekly_performance(user_id):
+    """Calculate weekly performance for a user"""
+    try:
+        # Get habits from last 7 days
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=7)
+        
+        weekly_habits = []
+        total_habits = 0
+        completed_habits = 0
+        
+        # Load habit history from JSON files
+        current_date = start_date
+        while current_date <= end_date:
+            history_file = f"habit_history_{current_date.strftime('%Y%m%d')}.json"
+            if os.path.exists(history_file):
+                with open(history_file, 'r') as f:
+                    day_data = json.load(f)
+                    user_day_habits = day_data.get(user_id, [])
+                    for habit in user_day_habits:
+                        total_habits += 1
+                        if habit.get('completed', False):
+                            completed_habits += 1
+                    weekly_habits.extend(user_day_habits)
+            current_date += timedelta(days=1)
+        
+        # Calculate completion percentage
+        completion_pct = (completed_habits / total_habits * 100) if total_habits > 0 else 0
+        
+        return {
+            "total_habits": total_habits,
+            "completed_habits": completed_habits,
+            "completion_pct": completion_pct,
+            "week_start": start_date.strftime('%Y-%m-%d'),
+            "week_end": end_date.strftime('%Y-%m-%d')
+        }
+    except Exception as e:
+        print(f"Error calculating weekly performance: {e}")
+        return {"total_habits": 0, "completed_habits": 0, "completion_pct": 0}
+
+def store_weekly_report(user_id, performance_data):
+    """Store weekly report in database"""
+    try:
+        db.supabase.table("weekly_reports").insert({
+            "user_id": user_id,
+            "week_start": performance_data["week_start"],
+            "week_end": performance_data["week_end"],
+            "total_habits": performance_data["total_habits"],
+            "completed_habits": performance_data["completed_habits"],
+            "completion_percentage": performance_data["completion_pct"],
+            "created_at": datetime.now().isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"Error storing weekly report: {e}")
+
+# Schedule tasks
 scheduler.add_job(daily_task, 'cron', hour=0, minute=1)
-# Schedule weekly performance calculation at Sunday 23:59
 scheduler.add_job(weekly_task, 'cron', day_of_week='sun', hour=23, minute=59)
 scheduler.start()
-
 @app.get("/")
 def root():
     return {"message": "HabitHub API is running", "status": "healthy"}
