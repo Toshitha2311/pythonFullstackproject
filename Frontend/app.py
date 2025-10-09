@@ -191,6 +191,12 @@ if "alarm_popup_type" not in st.session_state:
     st.session_state.alarm_popup_type = ""
 if "current_page" not in st.session_state:
     st.session_state.current_page = "home"
+if "daily_habits_loaded" not in st.session_state:
+    st.session_state.daily_habits_loaded = False
+if "alarm_notification" not in st.session_state:
+    st.session_state.alarm_notification = None
+if "active_alarm_sound" not in st.session_state:
+    st.session_state.active_alarm_sound = None
 
 # -------------------------------
 # ENHANCED DAILY RESET & JSON STORAGE
@@ -258,7 +264,7 @@ def cleanup_old_habit_files():
         print(f"Error cleaning up old files: {e}")
 
 def initialize_daily_habits():
-    """Enhanced daily reset with JSON storage"""
+    """Enhanced daily reset with JSON storage - COMPLETELY FRESH START EVERY DAY"""
     if not st.session_state.user:
         return
     
@@ -270,27 +276,30 @@ def initialize_daily_habits():
         st.session_state.current_week_number = current_week
         st.session_state.weekly_report_generated = False
 
-    # First load or new day
-    if "last_reset_date" not in st.session_state or st.session_state.last_reset_date != today:
+    # Check if it's a new day - COMPLETELY RESET HABITS
+    if ("last_reset_date" not in st.session_state or 
+        st.session_state.last_reset_date != today or
+        not st.session_state.daily_habits_loaded):
+        
         # If we have previous data, save it to JSON before resetting
         if (hasattr(st.session_state, 'last_reset_date') and 
             st.session_state.last_reset_date and 
             st.session_state.today_habits):
             save_daily_habits_to_json()
         
-        # Reset for new day
+        # COMPLETE RESET for new day - NO HABITS CARRIED OVER
         st.session_state.last_reset_date = today
-        st.session_state.today_habits = []
+        st.session_state.today_habits = []  # EMPTY LIST - FRESH START
         st.session_state.deleted_habits = set()
         st.session_state.completed_habits = set()
         st.session_state.active_timers = {}
+        st.session_state.daily_habits_loaded = True
         
         # Clean up old files (runs occasionally)
         if today.day % 7 == 0:  # Run cleanup once a week
             cleanup_old_habit_files()
         
-        # Load fresh habits for today
-        load_fresh_habits()
+        st.rerun()
 
 def load_fresh_habits():
     """Load fresh habits for today - previous habits don't carry over"""
@@ -337,6 +346,29 @@ def render_alarm_popup():
         if st.button("Close Notification", key=close_key):
             st.session_state.show_alarm_popup = False
             st.rerun()
+
+def show_alarm_notification(message):
+    """Show alarm notification that appears automatically"""
+    st.session_state.alarm_notification = message
+    # Use JavaScript to show a browser notification
+    js_code = f"""
+    <script>
+    if ("Notification" in window) {{
+        Notification.requestPermission().then(function(permission) {{
+            if (permission === "granted") {{
+                new Notification("HabitHub Alarm", {{
+                    body: "{message}",
+                    icon: "https://cdn-icons-png.flaticon.com/512/2091/2091471.png"
+                }});
+            }}
+        }});
+    }}
+    </script>
+    """
+    st.components.v1.html(js_code, height=0)
+    
+    # Also show in Streamlit
+    st.toast(f"🔔 {message}", icon="⏰")
 
 # -------------------------------
 # CARTOON STYLING WITH ORANGE/VIOLET/WHITE THEME
@@ -573,6 +605,31 @@ def apply_cartoon_styles():
         font-style: italic;
         padding: 1rem;
     }
+    
+    .completed-habit {
+        opacity: 0.7;
+        background: rgba(76, 175, 80, 0.1) !important;
+    }
+    
+    .completed-habit button {
+        display: none !important;
+    }
+    
+    .stop-alarm-btn {
+        background: linear-gradient(45deg, #FF416C, #FF4B2B) !important;
+        border: 2px solid #FFFFFF !important;
+        animation: alarmPulse 1s infinite;
+    }
+    
+    .completed-day {
+        opacity: 0.6;
+        background: rgba(76, 175, 80, 0.15) !important;
+        border: 1px solid rgba(76, 175, 80, 0.3) !important;
+    }
+    
+    .completed-day .day-header {
+        color: #4CAF50 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -620,10 +677,11 @@ def today_status_api(user_id):
     return safe_json(resp)
 
 def weekly_perf_api(user_id):
-    """Get weekly performance from database - only at end of week"""
+    """Get weekly performance from database - ONLY at end of week"""
     try:
-        # Check if it's end of week (Sunday)
         today = datetime.now()
+        
+        # Only generate report on Sunday (end of week)
         if today.weekday() != 6:  # 6 = Sunday
             return {
                 "success": True,
@@ -636,64 +694,51 @@ def weekly_perf_api(user_id):
                 "daily_breakdown": []
             }
         
-        # Only generate report on Sunday
-        resp = requests.post(f"{API_URL}/weekly/report", json={"user_id": user_id}, timeout=5)
-        if resp.status_code == 200:
-            data = safe_json(resp)
-            if data.get("success"):
-                st.session_state.weekly_report_generated = True
-                return data
-        
-        # Fallback: Calculate from database records
-        return calculate_weekly_from_database(user_id)
-    except:
-        # Fallback to database calculation
-        return calculate_weekly_from_database(user_id)
-
-def calculate_weekly_from_database(user_id):
-    """Calculate weekly performance from database records"""
-    try:
-        today = datetime.now()
+        # Calculate weekly performance from actual habit data (only on Sunday)
         week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
         
-        # Generate realistic weekly data based on actual performance
-        total_habits_week = len(st.session_state.today_habits) * 7  # Estimate
-        completed_habits_week = len(st.session_state.completed_habits) * 7  # Estimate
+        weekly_habits = []
+        total_completed = 0
+        total_habits = 0
         
-        # Create daily breakdown for the current week
+        # Get habits for each day of the week
         daily_breakdown = []
         for i in range(7):
             day_date = week_start + timedelta(days=i)
-            day_name = day_date.strftime('%A')
+            day_habits = load_previous_habits_from_json(user_id, day_date)
             
-            # Simulate daily performance (you would replace this with actual data)
-            day_total = random.randint(2, 5)
-            day_completed = random.randint(0, day_total)
-            completion_rate = (day_completed / day_total * 100) if day_total > 0 else 0
-            
-            daily_breakdown.append({
-                "date": day_date.strftime('%Y-%m-%d'),
-                "day_name": day_name,
-                "total_habits": day_total,
-                "completed_habits": day_completed,
-                "completion_rate": round(completion_rate, 1)
-            })
+            if day_habits:
+                day_completed = sum(1 for habit in day_habits if habit.get('completed', False))
+                day_total = len(day_habits)
+                completion_rate = (day_completed / day_total * 100) if day_total > 0 else 0
+                
+                daily_breakdown.append({
+                    "date": day_date.strftime('%Y-%m-%d'),
+                    "day_name": day_date.strftime('%A'),
+                    "total_habits": day_total,
+                    "completed_habits": day_completed,
+                    "completion_rate": round(completion_rate, 1)
+                })
+                
+                total_completed += day_completed
+                total_habits += day_total
         
-        total_completed = sum(day["completed_habits"] for day in daily_breakdown)
-        total_possible = sum(day["total_habits"] for day in daily_breakdown)
-        overall_completion = (total_completed / total_possible * 100) if total_possible > 0 else 0
+        # Calculate overall completion
+        overall_completion = (total_completed / total_habits * 100) if total_habits > 0 else 0
         
         return {
             "success": True,
-            "total_habits": total_possible,
+            "total_habits": total_habits,
             "completed_habits": total_completed,
             "completion_pct": round(overall_completion, 1),
             "week_start": week_start.strftime('%Y-%m-%d'),
-            "week_end": (week_start + timedelta(days=6)).strftime('%Y-%m-%d'),
+            "week_end": week_end.strftime('%Y-%m-%d'),
             "daily_breakdown": daily_breakdown
         }
+        
     except Exception as e:
-        print(f"Error calculating weekly from database: {e}")
+        print(f"Error calculating weekly performance: {e}")
         return {
             "success": True,
             "total_habits": 0,
@@ -738,13 +783,21 @@ def remove_habit_api(habit_id, user_id):
 def play_alarm():
     """Enhanced alarm sound with multiple fallback methods"""
     try:
-        # Try different sound file names
-        sound_files = ["alarm.mp3", "alarm.wav", "alarm_sound.mp3"]
+        # Try different sound file names with different paths
+        sound_files = [
+            "alarm.mp3", 
+            "alarm.wav", 
+            "alarm_sound.mp3", 
+            "beep.mp3",
+            "./alarm.mp3",
+            "./sounds/alarm.mp3"
+        ]
         sound_path = None
         
         for file in sound_files:
             if os.path.exists(file):
                 sound_path = file
+                print(f"Found alarm sound: {sound_path}")
                 break
         
         if sound_path:
@@ -752,16 +805,43 @@ def play_alarm():
             pygame.mixer.music.load(sound_path)
             pygame.mixer.music.play(-1)  # Loop indefinitely
             st.session_state.alarm_sound_playing = True
+            st.session_state.active_alarm_sound = "music"
             return True
         else:
-            # Fallback to JavaScript audio
-            show_alarm_popup("🔊 Alarm sound file not found. Using browser sound instead.", "warning")
-            play_alarm_sound_js()
-            return True
+            # Create a simple beep sound using pygame if no file found
+            try:
+                pygame.mixer.init()
+                sample_rate = 44100
+                duration = 1000  # milliseconds
+                frequency = 880  # Hz
+                
+                n_samples = int(round(duration * 0.001 * sample_rate))
+                buf = np.zeros((n_samples, 2), dtype=np.int16)
+                max_sample = 2**(16 - 1) - 1
+                
+                for i in range(n_samples):
+                    t = float(i) / sample_rate
+                    buf[i][0] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
+                    buf[i][1] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
+                
+                sound = pygame.sndarray.make_sound(buf)
+                sound.play(-1)  # Loop the sound
+                st.session_state.alarm_sound_playing = True
+                st.session_state.active_alarm_sound = sound
+                return True
+            except Exception as e:
+                print(f"Error generating beep: {e}")
+                # Fallback to JavaScript audio
+                play_alarm_sound_js()
+                st.session_state.alarm_sound_playing = True
+                st.session_state.active_alarm_sound = "js"
+                return True
     except Exception as e:
         print(f"Error playing alarm: {e}")
         # Final fallback to JavaScript
         play_alarm_sound_js()
+        st.session_state.alarm_sound_playing = True
+        st.session_state.active_alarm_sound = "js"
         return False
 
 def play_alarm_sound_js():
@@ -809,7 +889,7 @@ def play_alarm_sound_js():
         } catch(e) {
             console.log('Web Audio failed:', e);
             // Ultimate fallback - show a visual alert
-            alert('🔔 ALARM! Time for your habit!');
+            alert('🔔 HABITHUB ALARM! Time for your habit!');
         }
     }
     playAlarmSound();
@@ -817,17 +897,42 @@ def play_alarm_sound_js():
     """, unsafe_allow_html=True)
 
 def stop_alarm():
-    """Stop alarm sound"""
+    """Stop alarm sound - FIXED to work properly"""
     try:
-        pygame.mixer.music.stop()
+        # Stop pygame music if playing
+        if st.session_state.active_alarm_sound == "music":
+            pygame.mixer.music.stop()
+        # Stop pygame sound if playing
+        elif hasattr(st.session_state.active_alarm_sound, 'stop'):
+            st.session_state.active_alarm_sound.stop()
+        
         st.session_state.alarm_sound_playing = False
-    except:
-        pass
+        st.session_state.active_alarm_sound = None
+        return True
+    except Exception as e:
+        print(f"Error stopping alarm: {e}")
+        # Try to stop any pygame sounds
+        try:
+            pygame.mixer.music.stop()
+            pygame.mixer.stop()
+        except:
+            pass
+        st.session_state.alarm_sound_playing = False
+        st.session_state.active_alarm_sound = None
+        return False
 
 def test_alarm():
     """Test alarm sound"""
     try:
-        sound_files = ["alarm.mp3", "alarm.wav", "alarm_sound.mp3"]
+        show_alarm_notification("🔊 Testing alarm sound...")
+        
+        sound_files = [
+            "alarm.mp3", 
+            "alarm.wav", 
+            "alarm_sound.mp3", 
+            "beep.mp3",
+            "./alarm.mp3"
+        ]
         sound_path = None
         
         for file in sound_files:
@@ -840,12 +945,33 @@ def test_alarm():
             pygame.mixer.music.load(sound_path)
             pygame.mixer.music.play()
             show_alarm_popup(f"🔊 Testing alarm sound: {sound_path}", "success")
-            time.sleep(3)
-            pygame.mixer.music.stop()
+            # Add stop button for test alarm
+            if st.button("🛑 Stop Test Alarm", key="stop_test_alarm"):
+                pygame.mixer.music.stop()
+                show_alarm_popup("Test alarm stopped", "success")
         else:
-            show_alarm_popup("No alarm sound file found. Using browser sound.", "warning")
-            play_alarm_sound_js()
-            time.sleep(3)
+            # Use pygame to generate beep
+            pygame.mixer.init()
+            sample_rate = 44100
+            duration = 500  # milliseconds
+            frequency = 660  # Hz
+            
+            n_samples = int(round(duration * 0.001 * sample_rate))
+            buf = np.zeros((n_samples, 2), dtype=np.int16)
+            max_sample = 2**(16 - 1) - 1
+            
+            for i in range(n_samples):
+                t = float(i) / sample_rate
+                buf[i][0] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
+                buf[i][1] = int(round(max_sample * math.sin(2 * math.pi * frequency * t)))
+            
+            sound = pygame.sndarray.make_sound(buf)
+            sound.play()
+            show_alarm_popup("🔊 Playing generated beep sound (no alarm file found)", "info")
+            # Add stop button for test alarm
+            if st.button("🛑 Stop Test Alarm", key="stop_test_beep"):
+                sound.stop()
+                show_alarm_popup("Test alarm stopped", "success")
     except Exception as e:
         show_alarm_popup(f"Error testing alarm: {e}", "error")
         play_alarm_sound_js()
@@ -870,48 +996,19 @@ def load_json(file_path):
         print(f"Error loading {file_path}: {e}")
         return {}
 
-# ---------- Enhanced Alarm Monitor ----------
-def monitor_alarm():
-    """Enhanced background thread to monitor and trigger alarms"""
+# -------------------------------
+# ENHANCED ALARM MONITORING SYSTEM
+# -------------------------------
+def monitor_alarms_background():
+    """Background thread to monitor and trigger alarms"""
     while True:
         try:
-            alarm_settings = load_json(ALARM_FILE)
-            habits_data = load_json(HABITS_FILE) or {}
-            
-            if alarm_settings and alarm_settings.get("enabled", True):
-                now = datetime.now()
-                current_day = now.strftime("%A")
-                current_time = now.strftime("%H:%M")
-
-                if current_day in alarm_settings.get("days", []) and current_time == alarm_settings.get("time", ""):
-                    quote = random.choice(MOTIVATIONAL_QUOTES)
-                    todays_habits = habits_data.get(current_day, [])
-                    
-                    # Create a more prominent notification that works on any page
-                    if todays_habits:
-                        habit_text = " • ".join(todays_habits)
-                        popup_message = f"🔔 WEEKLY ALARM! {quote}\n\n📋 Today's Habits: {habit_text}"
-                    else:
-                        popup_message = f"🔔 WEEKLY ALARM! {quote}\n\n💡 No habits added for today. Time to plan your day!"
-                    
-                    # Show popup on any page
-                    show_alarm_popup(popup_message, "warning")
-                    
-                    # Play alarm with retry logic
-                    if not play_alarm():
-                        # If first attempt failed, try again after 2 seconds
-                        time.sleep(2)
-                        play_alarm()
-                    
-                    time.sleep(60)  # Prevent multiple triggers in the same minute
+            if st.session_state.user:
+                check_alarms()
+            time.sleep(30)  # Check every 30 seconds
         except Exception as e:
             print(f"Error in alarm monitor: {e}")
-        time.sleep(30)  # Check every 30 seconds
-
-# ---------- Initialize Background Thread ----------
-if 'alarm_thread_started' not in st.session_state:
-    threading.Thread(target=monitor_alarm, daemon=True).start()
-    st.session_state.alarm_thread_started = True
+            time.sleep(30)
 
 def check_alarms():
     """Enhanced alarm checking with better timing"""
@@ -927,6 +1024,8 @@ def check_alarms():
     current_day = calendar.day_name[now.weekday()]
     
     triggered = []
+    
+    # Check habit alarms
     for habit_name, alarm in list(st.session_state.alarms.items()):
         alarm_time = alarm["alarm_time"].strftime("%H:%M")
         alarm_days = alarm.get("days", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
@@ -941,9 +1040,10 @@ def check_alarms():
             triggered.append(habit_name)
             st.session_state.last_alarm_trigger[habit_name] = now
             
-            # Enhanced notification that works on any page
+            # Enhanced notification with popup and toast
             popup_message = f"🔔 Habit Reminder!\n\n{habit_name} - Time to work on your habit! ⏰"
             show_alarm_popup(popup_message, "info")
+            show_alarm_notification(f"Time for {habit_name}!")
             
             # Play sound with better error handling
             try:
@@ -959,6 +1059,39 @@ def check_alarms():
                 "days": alarm_days,
                 "type": "habit_reminder"
             })
+    
+    # Check weekly alarms
+    alarm_settings = load_json(ALARM_FILE)
+    if alarm_settings and alarm_settings.get("enabled", True):
+        alarm_time_str = alarm_settings.get("time", "")
+        alarm_days = alarm_settings.get("days", [])
+        
+        if current_day in alarm_days and current_time == alarm_time_str:
+            # Check cooldown for weekly alarm
+            last_weekly_trigger = st.session_state.last_alarm_trigger.get("weekly_alarm")
+            if last_weekly_trigger and (now - last_weekly_trigger).total_seconds() < 55:
+                return triggered
+                
+            st.session_state.last_alarm_trigger["weekly_alarm"] = now
+            
+            quote = random.choice(MOTIVATIONAL_QUOTES)
+            habits_data = load_json(HABITS_FILE) or {}
+            todays_habits = habits_data.get(current_day, [])
+            
+            # Create notification
+            if todays_habits:
+                habit_text = " • ".join(todays_habits)
+                popup_message = f"🔔 WEEKLY ALARM! {quote}\n\n📋 Today's Habits: {habit_text}"
+            else:
+                popup_message = f"🔔 WEEKLY ALARM! {quote}\n\n💡 No habits added for today. Time to plan your day!"
+            
+            show_alarm_popup(popup_message, "warning")
+            show_alarm_notification("Weekly habit reminder! Check your habits for today.")
+            
+            # Play alarm with retry logic
+            if not play_alarm():
+                time.sleep(2)
+                play_alarm()
     
     return triggered
 
@@ -982,6 +1115,7 @@ def set_alarm(habit_name, alarm_time, days=None):
     
     days_display = ", ".join(days) if days else "daily"
     show_alarm_popup(f"🔔 Alarm set for {habit_name} at {alarm_time.strftime('%I:%M %p')} on {days_display}!", "success")
+    show_alarm_notification(f"Alarm set for {habit_name}")
     return alarm_time
 
 def remove_alarm(habit_name):
@@ -1392,6 +1526,7 @@ def habit_reminder_system_page():
                         }
                         if save_json(ALARM_FILE, new_settings):
                             show_alarm_popup("✅ Reminder settings saved! You'll receive notifications on selected days.", "success")
+                            show_alarm_notification("Weekly alarm settings saved!")
                         else:
                             show_alarm_popup("❌ Failed to save settings", "error")
                     else:
@@ -1400,12 +1535,16 @@ def habit_reminder_system_page():
             with col2:
                 if st.button("🔊 Test Sound", use_container_width=True):
                     show_alarm_popup("Playing test sound...", "info")
+                    show_alarm_notification("Testing alarm sound...")
                     threading.Thread(target=test_alarm, daemon=True).start()
 
             with col3:
-                if st.button("⏹ Stop Sound", use_container_width=True):
-                    stop_alarm()
-                    show_alarm_popup("✅ Sound stopped.", "success")
+                if st.button("⏹ Stop Alarm", use_container_width=True, type="secondary"):
+                    if stop_alarm():
+                        show_alarm_popup("✅ Alarm stopped successfully!", "success")
+                        show_alarm_notification("Alarm stopped")
+                    else:
+                        show_alarm_popup("❌ No alarm is currently playing", "warning")
                 
         else:
             if st.button("Disable Reminders", use_container_width=True):
@@ -1431,14 +1570,29 @@ def habit_reminder_system_page():
         for day in days:
             day_habits = habits.get(day, [])
             
+            # Check if this day is completed (all habits completed)
+            day_completed = False
+            if day_habits:
+                # For weekly planner, we consider a day "completed" if all habits are marked as completed
+                # Since this is a planning tool, we'll use a simple approach
+                day_completed = all(habit.get('completed', False) if isinstance(habit, dict) else False for habit in day_habits)
+            
+            day_class = "day-card completed-day" if day_completed else "day-card"
+            
             st.markdown(f'''
-            <div class="day-card">
+            <div class="{day_class}">
                 <div class="day-header">{day}</div>
             ''', unsafe_allow_html=True)
             
             if day_habits:
                 for i, habit in enumerate(day_habits, 1):
-                    st.markdown(f'<div class="habit-item">{i}. {habit}</div>', unsafe_allow_html=True)
+                    if isinstance(habit, dict):
+                        habit_name = habit.get('name', 'Unknown Habit')
+                        completed = habit.get('completed', False)
+                        habit_class = "habit-item completed-habit" if completed else "habit-item"
+                        st.markdown(f'<div class="{habit_class}">{i}. {habit_name} {"✅" if completed else ""}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="habit-item">{i}. {habit}</div>', unsafe_allow_html=True)
             else:
                 st.markdown('<div class="empty-state">No habits scheduled</div>', unsafe_allow_html=True)
             
@@ -1468,16 +1622,37 @@ def habit_reminder_system_page():
                     show_alarm_popup("⚠️ Please enter a habit name", "warning")
         
         with col2:
+            # Get habits for selected day, filtering out completed ones for removal
+            day_habits = habits.get(selected_day, [])
+            available_habits_to_remove = []
+            
+            for habit in day_habits:
+                if isinstance(habit, dict):
+                    if not habit.get('completed', False):  # Only show incomplete habits for removal
+                        available_habits_to_remove.append(habit.get('name', 'Unknown Habit'))
+                else:
+                    available_habits_to_remove.append(habit)
+            
             habit_to_remove = st.selectbox(
                 "Select Habit to Remove",
-                options=habits.get(selected_day, []),
+                options=available_habits_to_remove,
                 key="remove_habit_select",
                 placeholder="Select a habit to remove..."
             )
             
             if st.button("🗑️ Remove Habit", use_container_width=True):
                 if habit_to_remove and selected_day in habits:
-                    habits[selected_day].remove(habit_to_remove)
+                    # Find and remove the habit
+                    updated_habits = []
+                    for habit in habits[selected_day]:
+                        if isinstance(habit, dict):
+                            if habit.get('name') != habit_to_remove:
+                                updated_habits.append(habit)
+                        else:
+                            if habit != habit_to_remove:
+                                updated_habits.append(habit)
+                    
+                    habits[selected_day] = updated_habits
                     if save_json(HABITS_FILE, habits):
                         show_alarm_popup(f"✅ Removed '{habit_to_remove}' from {selected_day}", "success")
                         st.rerun()
@@ -1528,6 +1703,18 @@ def home_page():
     # Render alarm popup if any
     render_alarm_popup()
     
+    # Add stop alarm button in the main interface
+    if st.session_state.alarm_sound_playing:
+        st.markdown('<div class="cartoon-card alarm-active">', unsafe_allow_html=True)
+        st.warning("🔔 Alarm is currently playing!")
+        if st.button("🛑 Stop Alarm", key="stop_alarm_main", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     # Animated greeting + date
     now = datetime.now()
     hour = now.hour
@@ -1555,23 +1742,18 @@ def home_page():
 
     st.markdown("### Today's Fresh Start 🌟")
 
-    # Get today's status
+    # Show fresh start message if it's a new day
+    today = datetime.now().date()
+    if st.session_state.last_reset_date == today:
+        st.success("✨ **Fresh Start!** Today is a new day. Previous habits are cleared. Add new habits to begin! ✨")
+
+    # Get today's status - ONLY TODAY'S HABITS
     today_data = today_status_api(st.session_state.user["user_id"])
     
     if today_data.get("success"):
-        total_habits = today_data["total_habits"]
-        completed_habits = today_data["completed_habits"]
+        total_habits = len(st.session_state.today_habits)
+        completed_habits = len(st.session_state.completed_habits)
         
-        # Ensure we only show current user's habits
-        user_habits = [habit for habit in today_data["habits"]]
-        st.session_state.today_habits = user_habits
-        
-        # Update completed habits in session state
-        st.session_state.completed_habits = set()
-        for habit in st.session_state.today_habits:
-            if habit.get("completed"):
-                st.session_state.completed_habits.add(habit["habit_id"])
-
         if total_habits > 0:
             cols = st.columns(3)
             with cols[0]:
@@ -1606,6 +1788,14 @@ def home_page():
                 st.info(f"Great progress! {completed_habits} habits completed.")
             else:
                 st.info("🌟 Start completing your habits for today!")
+                
+            # Add pie chart for today's progress
+            today_distribution = get_today_habit_distribution()
+            if today_distribution["Completed"] > 0 or today_distribution["Pending"] > 0:
+                st.markdown("### 📊 Today's Progress Chart")
+                fig = create_today_pie_chart(today_distribution)
+                if fig:
+                    st.pyplot(fig)
         else:
             st.info("🌟 Add your first habit to start your daily journey!")
     else:
@@ -1623,6 +1813,18 @@ def create_habit_page():
     
     # Render alarm popup if any
     render_alarm_popup()
+    
+    # Add stop alarm button
+    if st.session_state.alarm_sound_playing:
+        st.markdown('<div class="cartoon-card alarm-active">', unsafe_allow_html=True)
+        st.warning("🔔 Alarm is currently playing!")
+        if st.button("🛑 Stop Alarm", key="stop_alarm_create", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("### Create New Habit")
     
@@ -1669,6 +1871,7 @@ def create_habit_page():
                         set_alarm(habit_name, alarm_time, selected_days)
                     
                     show_alarm_popup("Habit created successfully! 🌟", "success")
+                    show_alarm_notification(f"New habit '{habit_name}' created!")
                     
                     # Reload user data and refresh today's habits
                     load_user_data(st.session_state.user["user_id"])
@@ -1695,18 +1898,30 @@ def my_habits_page():
     # Render alarm popup if any
     render_alarm_popup()
     
+    # Add stop alarm button
+    if st.session_state.alarm_sound_playing:
+        st.markdown('<div class="cartoon-card alarm-active">', unsafe_allow_html=True)
+        st.warning("🔔 Alarm is currently playing!")
+        if st.button("🛑 Stop Alarm", key="stop_alarm_habits", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     st.markdown("# Today's Habits")
     
-    # Only show habits for the current logged-in user
+    # Show fresh start message
+    today = datetime.now().date()
+    if st.session_state.last_reset_date == today:
+        st.success("✨ **Fresh Start!** Today is a new day. Your habits from previous days are cleared. ✨")
+    
+    # Only show habits for the current logged-in user - ONLY TODAY'S HABITS
     habits = st.session_state.today_habits
     if not habits:
         st.info("No habits for today. Add some habits to get started! 🌟")
         return
-    
-    # Show fresh start message if it's a new day
-    today = datetime.now().date()
-    if st.session_state.last_reset_date == today and len(habits) > 0:
-        st.success("✨ Fresh start for today! All habits are new. ✨")
     
     for habit in habits:
         if habit["habit_id"] in st.session_state.deleted_habits:
@@ -1723,6 +1938,10 @@ def my_habits_page():
             bubble_class += " timer-active"
         if has_alarm:
             bubble_class += " alarm-active"
+        
+        # For completed habits, add a special class that hides buttons
+        if completed:
+            bubble_class += " completed-habit"
         
         st.markdown(f'<div class="{bubble_class}">', unsafe_allow_html=True)
         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
@@ -1750,6 +1969,7 @@ def my_habits_page():
                 # Auto-complete if target time reached
                 if elapsed.total_seconds() >= target_seconds and not completed:
                     show_alarm_popup("🎉 Target time reached! Habit completed!", "success")
+                    show_alarm_notification(f"'{habit['name']}' completed! 🎉")
                     complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
                     play_completion_sound()
                     load_fresh_habits()
@@ -1766,7 +1986,7 @@ def my_habits_page():
                 st.markdown(f"**Days:** {days_display}", unsafe_allow_html=True)
         
         with col2:
-            if not completed:
+            if not completed:  # Only show timer buttons for incomplete habits
                 if timer_active:
                     if st.button("Stop", key=f"stop_{habit['habit_id']}", use_container_width=True):
                         duration = stop_timer(habit["habit_id"])
@@ -1775,18 +1995,21 @@ def my_habits_page():
                             play_completion_sound()
                             # Auto-complete when timer stops
                             complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                            show_alarm_notification(f"'{habit['name']}' completed! 🎉")
                             load_fresh_habits()
                         st.rerun()
                 else:
                     if st.button("Start", key=f"start_{habit['habit_id']}", use_container_width=True):
                         start_timer(habit["name"], habit["habit_id"], target_minutes)
+                        show_alarm_notification(f"Timer started for '{habit['name']}'")
                         st.rerun()
         
         with col3:
-            if not completed and not timer_active:
+            if not completed and not timer_active:  # Only show complete button for incomplete habits
                 if st.button("Complete", key=f"comp_{habit['habit_id']}", use_container_width=True, type="primary"):
                     complete_habit_api(habit["habit_id"], st.session_state.user["user_id"])
                     play_completion_sound()
+                    show_alarm_notification(f"'{habit['name']}' completed! 🎉")
                     load_fresh_habits()
                     load_user_data(st.session_state.user["user_id"])
                     show_alarm_popup("Habit completed! 🎉", "success")
@@ -1794,11 +2017,13 @@ def my_habits_page():
                     st.rerun()
         
         with col4:
-            if st.button("Delete", key=f"del_{habit['habit_id']}", use_container_width=True):
-                remove_habit_api(habit["habit_id"], st.session_state.user["user_id"])
-                show_alarm_popup("Habit deleted", "success")
-                time.sleep(1)
-                st.rerun()
+            if not completed:  # Only show delete button for incomplete habits
+                if st.button("Delete", key=f"del_{habit['habit_id']}", use_container_width=True):
+                    remove_habit_api(habit["habit_id"], st.session_state.user["user_id"])
+                    show_alarm_popup("Habit deleted", "success")
+                    show_alarm_notification(f"'{habit['name']}' deleted")
+                    time.sleep(1)
+                    st.rerun()
         
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1814,6 +2039,18 @@ def today_status_page():
     
     # Render alarm popup if any
     render_alarm_popup()
+    
+    # Add stop alarm button
+    if st.session_state.alarm_sound_playing:
+        st.markdown('<div class="cartoon-card alarm-active">', unsafe_allow_html=True)
+        st.warning("🔔 Alarm is currently playing!")
+        if st.button("🛑 Stop Alarm", key="stop_alarm_status", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     st.markdown("# Today's Progress")
     
@@ -1903,6 +2140,18 @@ def weekly_perf_page():
     # Render alarm popup if any
     render_alarm_popup()
     
+    # Add stop alarm button
+    if st.session_state.alarm_sound_playing:
+        st.markdown('<div class="cartoon-card alarm-active">', unsafe_allow_html=True)
+        st.warning("🔔 Alarm is currently playing!")
+        if st.button("🛑 Stop Alarm", key="stop_alarm_weekly", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     st.markdown("# Weekly Performance Report")
     
     # Get enhanced weekly data
@@ -1923,7 +2172,7 @@ def weekly_perf_page():
                 st.write(f"**Current Week:** {weekly_data.get('week_start', 'N/A')} to {weekly_data.get('week_end', 'N/A')}")
                 st.write("Continue building your habits throughout the week for a complete performance analysis!")
                 
-                # Show current progress preview
+                # Show current progress preview without pie chart
                 st.markdown("#### 🎯 Current Week Preview")
                 today_habits = st.session_state.today_habits
                 completed_today = sum(1 for habit in today_habits if habit.get('completed', False))
@@ -2038,6 +2287,11 @@ def main():
     # Setup auto-refresh for alarm checking
     setup_auto_refresh()
     
+    # Start background alarm monitoring if not already started
+    if not st.session_state.alarm_thread_started:
+        threading.Thread(target=monitor_alarms_background, daemon=True).start()
+        st.session_state.alarm_thread_started = True
+    
     # Main app navigation for logged-in users
     st.sidebar.markdown(f"""
     <div class="cartoon-card" style="text-align:center;">
@@ -2046,6 +2300,16 @@ def main():
         <p>Fresh start every day! ✨</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Add stop alarm button in sidebar if alarm is playing
+    if st.session_state.alarm_sound_playing:
+        st.sidebar.markdown("### 🔔 Alarm Active")
+        if st.sidebar.button("🛑 Stop Alarm", key="stop_alarm_sidebar", use_container_width=True, type="primary"):
+            if stop_alarm():
+                show_alarm_popup("Alarm stopped successfully!", "success")
+                st.rerun()
+            else:
+                show_alarm_popup("Failed to stop alarm", "error")
     
     # Active timers in sidebar
     if st.session_state.active_timers:
@@ -2107,6 +2371,10 @@ def main():
         st.session_state.alarms = {}
         st.session_state.last_alarm_trigger = {}
         st.session_state.show_alarm_popup = False
+        st.session_state.daily_habits_loaded = False
+        st.session_state.alarm_notification = None
+        st.session_state.active_alarm_sound = None
+        st.session_state.alarm_sound_playing = False
         st.rerun()
 
 if __name__ == "__main__":
