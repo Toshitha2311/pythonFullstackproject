@@ -197,9 +197,11 @@ if "alarm_notification" not in st.session_state:
     st.session_state.alarm_notification = None
 if "active_alarm_sound" not in st.session_state:
     st.session_state.active_alarm_sound = None
+if "today_date_key" not in st.session_state:
+    st.session_state.today_date_key = None
 
 # -------------------------------
-# ENHANCED DAILY RESET & JSON STORAGE
+# ENHANCED DAILY RESET & JSON STORAGE - FIXED
 # -------------------------------
 def save_daily_habits_to_json():
     """Save today's habits to JSON file for historical data"""
@@ -270,6 +272,9 @@ def initialize_daily_habits():
     
     today = datetime.now().date()
     current_week = datetime.now().isocalendar()[1]
+    
+    # Create a unique key for today to track fresh start
+    today_key = f"{today.strftime('%Y%m%d')}_{st.session_state.user['user_id']}"
 
     # Check if week has changed
     if st.session_state.current_week_number != current_week:
@@ -277,17 +282,17 @@ def initialize_daily_habits():
         st.session_state.weekly_report_generated = False
 
     # Check if it's a new day - COMPLETELY RESET HABITS
-    if ("last_reset_date" not in st.session_state or 
-        st.session_state.last_reset_date != today or
+    if (st.session_state.today_date_key != today_key or
         not st.session_state.daily_habits_loaded):
         
         # If we have previous data, save it to JSON before resetting
-        if (hasattr(st.session_state, 'last_reset_date') and 
-            st.session_state.last_reset_date and 
+        if (st.session_state.today_date_key and 
+            st.session_state.today_date_key != today_key and 
             st.session_state.today_habits):
             save_daily_habits_to_json()
         
         # COMPLETE RESET for new day - NO HABITS CARRIED OVER
+        st.session_state.today_date_key = today_key
         st.session_state.last_reset_date = today
         st.session_state.today_habits = []  # EMPTY LIST - FRESH START
         st.session_state.deleted_habits = set()
@@ -304,12 +309,11 @@ def initialize_daily_habits():
 def load_fresh_habits():
     """Load fresh habits for today - previous habits don't carry over"""
     if st.session_state.user:
-        # Get today's habits from API - this should only return current user's habits
+        # Get habits from API but only use today's habits
         today_data = today_status_api(st.session_state.user["user_id"])
         if today_data.get("success"):
-            # Filter habits to ensure only current user's habits are shown
-            user_habits = [habit for habit in today_data["habits"]]
-            st.session_state.today_habits = user_habits
+            # Only show habits that have logs for today
+            st.session_state.today_habits = today_data["habits"]
             
             # Update completed habits in session state
             st.session_state.completed_habits = set()
@@ -539,102 +543,11 @@ def apply_cartoon_styles():
         font-size: 0.8rem;
         text-align: center;
     }
-    
-    .professional-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin: 1rem 0;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-        overflow: hidden;
-    }
-    
-    .professional-table th {
-        background: rgba(147, 124, 255, 0.3);
-        padding: 12px;
-        text-align: left;
-        color: white;
-        font-weight: 600;
-    }
-    
-    .professional-table td {
-        padding: 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        color: white;
-    }
-    
-    .professional-table tr:hover {
-        background: rgba(255, 255, 255, 0.05);
-    }
-    
-    .weekly-planner-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-        gap: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .day-card {
-        background: rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1rem;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(10px);
-    }
-    
-    .day-header {
-        font-weight: 600;
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-        color: #8A2BE2;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        padding-bottom: 0.5rem;
-    }
-    
-    .habit-item {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 8px;
-        padding: 0.5rem;
-        margin: 0.25rem 0;
-        border-left: 3px solid #8A2BE2;
-    }
-    
-    .empty-state {
-        text-align: center;
-        color: rgba(255, 255, 255, 0.5);
-        font-style: italic;
-        padding: 1rem;
-    }
-    
-    .completed-habit {
-        opacity: 0.7;
-        background: rgba(76, 175, 80, 0.1) !important;
-    }
-    
-    .completed-habit button {
-        display: none !important;
-    }
-    
-    .stop-alarm-btn {
-        background: linear-gradient(45deg, #FF416C, #FF4B2B) !important;
-        border: 2px solid #FFFFFF !important;
-        animation: alarmPulse 1s infinite;
-    }
-    
-    .completed-day {
-        opacity: 0.6;
-        background: rgba(76, 175, 80, 0.15) !important;
-        border: 1px solid rgba(76, 175, 80, 0.3) !important;
-    }
-    
-    .completed-day .day-header {
-        color: #4CAF50 !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
 # -------------------------------
-# API HELPERS - UPDATED FOR DATABASE INTEGRATION
+# API HELPERS - UPDATED FOR YOUR DATABASE TABLES
 # -------------------------------
 def safe_json(resp):
     try:
@@ -643,107 +556,102 @@ def safe_json(resp):
         return {}
 
 def register_api(name, email, password):
-    resp = requests.post(f"{API_URL}/auth/register", 
-                        json={"name": name, "email": email, "password": password})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/auth/register", 
+                            json={"name": name, "email": email, "password": password})
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def login_api(email, password):
-    resp = requests.post(f"{API_URL}/auth/login", 
-                        json={"email": email, "password": password})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/auth/login", 
+                            json={"email": email, "password": password})
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def add_habit_api_backend(name, desc, user_id, target_minutes=25):
-    resp = requests.post(f"{API_URL}/habit/add", 
-                        json={"name": name, "description": desc, "user_id": user_id, "target_minutes": target_minutes})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/habit/add", 
+                            json={
+                                "name": name, 
+                                "description": desc, 
+                                "user_id": user_id, 
+                                "target_minutes": target_minutes
+                            })
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def list_habits_api(user_id):
-    resp = requests.post(f"{API_URL}/habit/list", json={"user_id": user_id})
-    data = safe_json(resp)
-    return data.get("habits", []) if data.get("success") else []
+    try:
+        resp = requests.post(f"{API_URL}/habit/list", json={"user_id": user_id})
+        data = safe_json(resp)
+        return data.get("habits", []) if data.get("success") else []
+    except:
+        return []
 
 def complete_habit_api_backend(hid, user_id):
-    resp = requests.post(f"{API_URL}/habit/complete", 
-                        json={"habit_id": hid, "user_id": user_id})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/habit/complete", 
+                            json={"habit_id": hid, "user_id": user_id})
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def remove_habit_api_backend(hid, user_id):
-    resp = requests.post(f"{API_URL}/habit/remove", 
-                        json={"habit_id": hid, "user_id": user_id})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/habit/remove", 
+                            json={"habit_id": hid, "user_id": user_id})
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def today_status_api(user_id):
-    resp = requests.post(f"{API_URL}/habit/today-status", json={"user_id": user_id})
-    return safe_json(resp)
+    try:
+        resp = requests.post(f"{API_URL}/habit/today-status", json={"user_id": user_id})
+        return safe_json(resp)
+    except:
+        return {"success": False, "error": "Connection failed"}
 
 def weekly_perf_api(user_id):
-    """Get weekly performance from database - ONLY at end of week"""
+    """Get weekly performance from database"""
     try:
-        today = datetime.now()
+        resp = requests.post(f"{API_URL}/habit/weekly-performance", json={"user_id": user_id})
+        data = safe_json(resp)
         
-        # Only generate report on Sunday (end of week)
-        if today.weekday() != 6:  # 6 = Sunday
+        if data.get("success"):
+            return data
+        else:
+            # Fallback to basic calculation
+            today = datetime.now()
+            week_start = today - timedelta(days=today.weekday())
+            week_end = week_start + timedelta(days=6)
+            
             return {
                 "success": True,
-                "message": "Weekly report will be generated at the end of the week (Sunday)",
                 "total_habits": 0,
                 "completed_habits": 0,
                 "completion_pct": 0,
-                "week_start": (today - timedelta(days=today.weekday())).strftime('%Y-%m-%d'),
-                "week_end": (today + timedelta(days=6-today.weekday())).strftime('%Y-%m-%d'),
+                "week_start": week_start.strftime('%Y-%m-%d'),
+                "week_end": week_end.strftime('%Y-%m-%d'),
                 "daily_breakdown": []
             }
         
-        # Calculate weekly performance from actual habit data (only on Sunday)
+    except Exception as e:
+        print(f"Error getting weekly performance: {e}")
+        today = datetime.now()
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
         
-        weekly_habits = []
-        total_completed = 0
-        total_habits = 0
-        
-        # Get habits for each day of the week
-        daily_breakdown = []
-        for i in range(7):
-            day_date = week_start + timedelta(days=i)
-            day_habits = load_previous_habits_from_json(user_id, day_date)
-            
-            if day_habits:
-                day_completed = sum(1 for habit in day_habits if habit.get('completed', False))
-                day_total = len(day_habits)
-                completion_rate = (day_completed / day_total * 100) if day_total > 0 else 0
-                
-                daily_breakdown.append({
-                    "date": day_date.strftime('%Y-%m-%d'),
-                    "day_name": day_date.strftime('%A'),
-                    "total_habits": day_total,
-                    "completed_habits": day_completed,
-                    "completion_rate": round(completion_rate, 1)
-                })
-                
-                total_completed += day_completed
-                total_habits += day_total
-        
-        # Calculate overall completion
-        overall_completion = (total_completed / total_habits * 100) if total_habits > 0 else 0
-        
-        return {
-            "success": True,
-            "total_habits": total_habits,
-            "completed_habits": total_completed,
-            "completion_pct": round(overall_completion, 1),
-            "week_start": week_start.strftime('%Y-%m-%d'),
-            "week_end": week_end.strftime('%Y-%m-%d'),
-            "daily_breakdown": daily_breakdown
-        }
-        
-    except Exception as e:
-        print(f"Error calculating weekly performance: {e}")
         return {
             "success": True,
             "total_habits": 0,
             "completed_habits": 0,
             "completion_pct": 0,
+            "week_start": week_start.strftime('%Y-%m-%d'),
+            "week_end": week_end.strftime('%Y-%m-%d'),
             "daily_breakdown": []
         }
 
@@ -754,7 +662,7 @@ def add_habit_api(habit_name, habit_description, user_id, target_minutes):
     # This now only updates the backend database
     result = add_habit_api_backend(habit_name, habit_description, user_id, target_minutes)
     if result.get("success"):
-        # Reload habits from database
+        # Reload habits from database - ONLY TODAY'S HABITS
         load_fresh_habits()
     return result
 
@@ -762,7 +670,7 @@ def complete_habit_api(habit_id, user_id):
     # Update backend database
     result = complete_habit_api_backend(habit_id, user_id)
     if result.get("success"):
-        # Update local state
+        # Update local state - ONLY FOR TODAY'S HABITS
         for habit in st.session_state.today_habits:
             if habit["habit_id"] == habit_id:
                 habit["completed"] = True
@@ -772,13 +680,13 @@ def remove_habit_api(habit_id, user_id):
     # Update backend database
     result = remove_habit_api_backend(habit_id, user_id)
     if result.get("success"):
-        # Update local state
+        # Update local state - ONLY TODAY'S HABITS
         st.session_state.today_habits = [h for h in st.session_state.today_habits if h["habit_id"] != habit_id]
         st.session_state.deleted_habits.add(habit_id)
     return result
 
 # -------------------------------
-# ENHANCED ALARM FUNCTIONS - FIXED
+# ENHANCED ALARM FUNCTIONS - UPDATED WITH TIME EDITING
 # -------------------------------
 def play_alarm():
     """Enhanced alarm sound with multiple fallback methods"""
@@ -945,10 +853,6 @@ def test_alarm():
             pygame.mixer.music.load(sound_path)
             pygame.mixer.music.play()
             show_alarm_popup(f"🔊 Testing alarm sound: {sound_path}", "success")
-            # Add stop button for test alarm
-            if st.button("🛑 Stop Test Alarm", key="stop_test_alarm"):
-                pygame.mixer.music.stop()
-                show_alarm_popup("Test alarm stopped", "success")
         else:
             # Use pygame to generate beep
             pygame.mixer.init()
@@ -968,10 +872,6 @@ def test_alarm():
             sound = pygame.sndarray.make_sound(buf)
             sound.play()
             show_alarm_popup("🔊 Playing generated beep sound (no alarm file found)", "info")
-            # Add stop button for test alarm
-            if st.button("🛑 Stop Test Alarm", key="stop_test_beep"):
-                sound.stop()
-                show_alarm_popup("Test alarm stopped", "success")
     except Exception as e:
         show_alarm_popup(f"Error testing alarm: {e}", "error")
         play_alarm_sound_js()
@@ -997,7 +897,7 @@ def load_json(file_path):
         return {}
 
 # -------------------------------
-# ENHANCED ALARM MONITORING SYSTEM
+# ENHANCED ALARM MONITORING SYSTEM WITH EDITABLE TIMES
 # -------------------------------
 def monitor_alarms_background():
     """Background thread to monitor and trigger alarms"""
@@ -1117,6 +1017,23 @@ def set_alarm(habit_name, alarm_time, days=None):
     show_alarm_popup(f"🔔 Alarm set for {habit_name} at {alarm_time.strftime('%I:%M %p')} on {days_display}!", "success")
     show_alarm_notification(f"Alarm set for {habit_name}")
     return alarm_time
+
+def update_alarm_time(habit_name, new_alarm_time, new_days=None):
+    """Update existing alarm time and days"""
+    if habit_name in st.session_state.alarms:
+        st.session_state.alarms[habit_name]["alarm_time"] = new_alarm_time
+        if new_days:
+            st.session_state.alarms[habit_name]["days"] = new_days
+        
+        # Save updated alarms to persistent database
+        if st.session_state.user:
+            save_alarms_to_db(st.session_state.user["user_id"], st.session_state.alarms)
+        
+        days_display = ", ".join(new_days) if new_days else ", ".join(st.session_state.alarms[habit_name]["days"])
+        show_alarm_popup(f"🔔 Alarm updated for {habit_name} at {new_alarm_time.strftime('%I:%M %p')} on {days_display}!", "success")
+        show_alarm_notification(f"Alarm updated for {habit_name}")
+        return True
+    return False
 
 def remove_alarm(habit_name):
     """Remove an alarm and save changes to database"""
@@ -1432,9 +1349,9 @@ def auth_page():
                         "name": result["name"],
                         "email": email
                     }
-                    # Initialize daily habits and load user data (including alarms from DB)
+                    # Initialize daily habits and load user data
                     initialize_daily_habits()
-                    load_user_data(result["user_id"])  # This now loads from database
+                    load_user_data(result["user_id"])
                     st.session_state.page = "home"
                     st.success("Welcome back! 🎉")
                     time.sleep(1)
@@ -1471,224 +1388,7 @@ def auth_page():
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 # -------------------------------
-# PROFESSIONAL ALARM SYSTEM PAGE - FIXED
-# -------------------------------
-def habit_reminder_system_page():
-    apply_cartoon_styles()
-    
-    st.markdown("# 🔔 Habit Reminder System")
-    
-    tab1, tab2 = st.tabs(["🕒 Reminder Settings", "📅 Weekly Planner"])
-
-    # --- TAB 1: Reminder Settings ---
-    with tab1:
-        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        
-        # Load current settings
-        alarm_settings = load_json(ALARM_FILE)
-        
-        if alarm_settings:
-            try:
-                saved_time = datetime.strptime(alarm_settings["time"], "%H:%M").time()
-            except:
-                saved_time = datetime.now().time()
-            saved_days = alarm_settings.get("days", [])
-            enabled = alarm_settings.get("enabled", True)
-        else:
-            saved_time = datetime.now().time()
-            saved_days = []
-            enabled = True
-
-        use_alarm = st.checkbox("Enable weekly habit reminders", value=enabled)
-        
-        if use_alarm:
-            alarm_time = st.time_input("Select reminder time", value=saved_time)
-            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-            selected_days = st.multiselect("Select days for reminders", days, default=saved_days)
-
-            if selected_days:
-                st.write(f"**Reminders set for:** {alarm_time.strftime('%I:%M %p')}")
-                days_display = "".join([f'<span class="day-pill active">{day[:3]}</span>' for day in selected_days])
-                st.markdown(f"**Selected Days:** {days_display}", unsafe_allow_html=True)
-            else:
-                st.warning("Please select at least one day for reminders")
-
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("💾 Save Settings", use_container_width=True):
-                    if selected_days:
-                        new_settings = {
-                            "time": alarm_time.strftime("%H:%M"), 
-                            "days": selected_days, 
-                            "enabled": True,
-                            "last_updated": datetime.now().isoformat()
-                        }
-                        if save_json(ALARM_FILE, new_settings):
-                            show_alarm_popup("✅ Reminder settings saved! You'll receive notifications on selected days.", "success")
-                            show_alarm_notification("Weekly alarm settings saved!")
-                        else:
-                            show_alarm_popup("❌ Failed to save settings", "error")
-                    else:
-                        show_alarm_popup("❌ Please select at least one day for reminders", "error")
-
-            with col2:
-                if st.button("🔊 Test Sound", use_container_width=True):
-                    show_alarm_popup("Playing test sound...", "info")
-                    show_alarm_notification("Testing alarm sound...")
-                    threading.Thread(target=test_alarm, daemon=True).start()
-
-            with col3:
-                if st.button("⏹ Stop Alarm", use_container_width=True, type="secondary"):
-                    if stop_alarm():
-                        show_alarm_popup("✅ Alarm stopped successfully!", "success")
-                        show_alarm_notification("Alarm stopped")
-                    else:
-                        show_alarm_popup("❌ No alarm is currently playing", "warning")
-                
-        else:
-            if st.button("Disable Reminders", use_container_width=True):
-                if alarm_settings:
-                    alarm_settings["enabled"] = False
-                    save_json(ALARM_FILE, alarm_settings)
-                show_alarm_popup("Reminders disabled. Enable the checkbox above to activate weekly notifications.", "warning")
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # --- TAB 2: Weekly Planner - PROFESSIONAL STRUCTURE ---
-    with tab2:
-        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### 📅 Weekly Habit Planner")
-        
-        habits = load_json(HABITS_FILE) or {}
-        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        
-        # Professional Grid Layout
-        st.markdown("#### Your Weekly Schedule")
-        st.markdown('<div class="weekly-planner-grid">', unsafe_allow_html=True)
-        
-        for day in days:
-            day_habits = habits.get(day, [])
-            
-            # Check if this day is completed (all habits completed)
-            day_completed = False
-            if day_habits:
-                # For weekly planner, we consider a day "completed" if all habits are marked as completed
-                # Since this is a planning tool, we'll use a simple approach
-                day_completed = all(habit.get('completed', False) if isinstance(habit, dict) else False for habit in day_habits)
-            
-            day_class = "day-card completed-day" if day_completed else "day-card"
-            
-            st.markdown(f'''
-            <div class="{day_class}">
-                <div class="day-header">{day}</div>
-            ''', unsafe_allow_html=True)
-            
-            if day_habits:
-                for i, habit in enumerate(day_habits, 1):
-                    if isinstance(habit, dict):
-                        habit_name = habit.get('name', 'Unknown Habit')
-                        completed = habit.get('completed', False)
-                        habit_class = "habit-item completed-habit" if completed else "habit-item"
-                        st.markdown(f'<div class="{habit_class}">{i}. {habit_name} {"✅" if completed else ""}</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="habit-item">{i}. {habit}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="empty-state">No habits scheduled</div>', unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)  # Close grid
-        
-        # Habit Management Section
-        st.markdown("---")
-        st.markdown("#### Manage Habits")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_day = st.selectbox("Select Day", days, key="planner_day_select")
-            new_habit = st.text_input("Habit Name", key="planner_habit_input", placeholder="Enter habit name...")
-            
-            if st.button("➕ Add Habit", use_container_width=True):
-                if new_habit.strip():
-                    habits.setdefault(selected_day, []).append(new_habit.strip())
-                    if save_json(HABITS_FILE, habits):
-                        show_alarm_popup(f"✅ Added '{new_habit}' to {selected_day}", "success")
-                        st.rerun()
-                    else:
-                        show_alarm_popup("❌ Failed to save habit", "error")
-                else:
-                    show_alarm_popup("⚠️ Please enter a habit name", "warning")
-        
-        with col2:
-            # Get habits for selected day, filtering out completed ones for removal
-            day_habits = habits.get(selected_day, [])
-            available_habits_to_remove = []
-            
-            for habit in day_habits:
-                if isinstance(habit, dict):
-                    if not habit.get('completed', False):  # Only show incomplete habits for removal
-                        available_habits_to_remove.append(habit.get('name', 'Unknown Habit'))
-                else:
-                    available_habits_to_remove.append(habit)
-            
-            habit_to_remove = st.selectbox(
-                "Select Habit to Remove",
-                options=available_habits_to_remove,
-                key="remove_habit_select",
-                placeholder="Select a habit to remove..."
-            )
-            
-            if st.button("🗑️ Remove Habit", use_container_width=True):
-                if habit_to_remove and selected_day in habits:
-                    # Find and remove the habit
-                    updated_habits = []
-                    for habit in habits[selected_day]:
-                        if isinstance(habit, dict):
-                            if habit.get('name') != habit_to_remove:
-                                updated_habits.append(habit)
-                        else:
-                            if habit != habit_to_remove:
-                                updated_habits.append(habit)
-                    
-                    habits[selected_day] = updated_habits
-                    if save_json(HABITS_FILE, habits):
-                        show_alarm_popup(f"✅ Removed '{habit_to_remove}' from {selected_day}", "success")
-                        st.rerun()
-                    else:
-                        show_alarm_popup("❌ Failed to remove habit", "error")
-                else:
-                    show_alarm_popup("⚠️ Please select a habit to remove", "warning")
-            
-            if st.button("🧹 Clear All for Day", use_container_width=True):
-                if selected_day in habits:
-                    habits[selected_day] = []
-                    if save_json(HABITS_FILE, habits):
-                        show_alarm_popup(f"✅ Cleared all habits for {selected_day}", "success")
-                        st.rerun()
-                    else:
-                        show_alarm_popup("❌ Failed to clear habits", "error")
-        
-        # Statistics Section
-        st.markdown("---")
-        st.markdown("#### 📊 Weekly Statistics")
-        
-        total_habits = sum(len(habits.get(day, [])) for day in days)
-        days_with_habits = sum(1 for day in days if habits.get(day))
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Habits", total_habits)
-        with col2:
-            st.metric("Days Scheduled", f"{days_with_habits}/7")
-        with col3:
-            st.metric("Completion Rate", "Tracked Weekly")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# -------------------------------
-# MAIN APP PAGES
+# HOME PAGE
 # -------------------------------
 def home_page():
     apply_cartoon_styles()
@@ -1731,7 +1431,7 @@ def home_page():
     <div class="fade-in">
         <div style="text-align:center; padding:1.5rem;">
             <h1 class="main-header">
-                {greeting}, {st.session_state.user['name']}!
+                {greeting}, {st.session_state.user['name'] if st.session_state.user else 'User'}!
             </h1>
         </div>
         <div style="background: linear-gradient(180deg, rgba(138, 43, 226, 0.28), rgba(147, 112, 219, 0.14)); border-radius: 14px; padding: 0.6rem; text-align: center; color: #ffffff; font-weight: 600; font-size: 0.95rem; margin: 0.75rem 0 1rem 0; border: 1px solid rgba(255,255,255,0.18); backdrop-filter: blur(8px);">
@@ -1748,59 +1448,63 @@ def home_page():
         st.success("✨ **Fresh Start!** Today is a new day. Previous habits are cleared. Add new habits to begin! ✨")
 
     # Get today's status - ONLY TODAY'S HABITS
-    today_data = today_status_api(st.session_state.user["user_id"])
-    
-    if today_data.get("success"):
-        total_habits = len(st.session_state.today_habits)
-        completed_habits = len(st.session_state.completed_habits)
+    if st.session_state.user:
+        today_data = today_status_api(st.session_state.user["user_id"])
         
-        if total_habits > 0:
-            cols = st.columns(3)
-            with cols[0]:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div style="font-size: 0.9rem; opacity: 0.8;">Today's Habits</div>
-                    <div style="font-size: 2rem; font-weight: bold;">{total_habits}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with cols[1]:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div style="font-size: 0.9rem; opacity: 0.8;">Completed</div>
-                    <div style="font-size: 2rem; font-weight: bold;">{completed_habits}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with cols[2]:
-                progress = (completed_habits/total_habits*100) if total_habits > 0 else 0
-                st.markdown(f"""
-                <div class="metric-card">
-                    <div style="font-size: 0.9rem; opacity: 0.8;">Today's Progress</div>
-                    <div style="font-size: 2rem; font-weight: bold;">{progress:.0f}%</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.progress(progress/100)
+        if today_data.get("success"):
+            total_habits = len(st.session_state.today_habits)
+            completed_habits = len(st.session_state.completed_habits)
             
-            # Show completion message
-            if completed_habits == total_habits and total_habits > 0:
-                st.success("🎉 Perfect! All habits completed for today!")
-            elif completed_habits > 0:
-                st.info(f"Great progress! {completed_habits} habits completed.")
-            else:
-                st.info("🌟 Start completing your habits for today!")
-                
-            # Add pie chart for today's progress
-            today_distribution = get_today_habit_distribution()
-            if today_distribution["Completed"] > 0 or today_distribution["Pending"] > 0:
-                st.markdown("### 📊 Today's Progress Chart")
-                fig = create_today_pie_chart(today_distribution)
-                if fig:
-                    st.pyplot(fig)
-        else:
-            st.info("🌟 Add your first habit to start your daily journey!")
-    else:
-        st.error("❌ Could not load today's status")
+            if total_habits > 0:
+                cols = st.columns(3)
+                with cols[0]:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Today's Habits</div>
+                        <div style="font-size: 2rem; font-weight: bold;">{total_habits}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with cols[1]:
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Completed</div>
+                        <div style="font-size: 2rem; font-weight: bold;">{completed_habits}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with cols[2]:
+                    progress = (completed_habits/total_habits*100) if total_habits > 0 else 0
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <div style="font-size: 0.9rem; opacity: 0.8;">Today's Progress</div>
+                        <div style="font-size: 2rem; font-weight: bold;">{progress:.0f}%</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
+                st.progress(progress/100)
+                
+                # Show completion message
+                if completed_habits == total_habits and total_habits > 0:
+                    st.success("🎉 Perfect! All habits completed for today!")
+                elif completed_habits > 0:
+                    st.info(f"Great progress! {completed_habits} habits completed.")
+                else:
+                    st.info("🌟 Start completing your habits for today!")
+                    
+                # Add pie chart for today's progress
+                today_distribution = get_today_habit_distribution()
+                if today_distribution["Completed"] > 0 or today_distribution["Pending"] > 0:
+                    st.markdown("### 📊 Today's Progress Chart")
+                    fig = create_today_pie_chart(today_distribution)
+                    if fig:
+                        st.pyplot(fig)
+            else:
+                st.info("🌟 Add your first habit to start your daily journey!")
+        else:
+            st.error("❌ Could not load today's status")
+
+# -------------------------------
+# CREATE HABIT PAGE
+# -------------------------------
 def create_habit_page():
     apply_cartoon_styles()
     initialize_daily_habits()
@@ -1862,8 +1566,8 @@ def create_habit_page():
                 st.info(f"Reminder will activate at {alarm_time.strftime('%I:%M %p')} on selected days for '{habit_name}'")
         
         if st.button("Create Habit", use_container_width=True, type="primary"):
-            if habit_name.strip():
-                # Use the API to add habit to database
+            if habit_name.strip() and st.session_state.user:
+                # Use the API to add habit to database - ONLY FOR TODAY
                 result = add_habit_api(habit_name, habit_description, st.session_state.user["user_id"], target_minutes)
                 if result.get("success"):
                     # Set alarm if requested
@@ -1885,6 +1589,9 @@ def create_habit_page():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
+# -------------------------------
+# MY HABITS PAGE
+# -------------------------------
 def my_habits_page():
     apply_cartoon_styles()
     initialize_daily_habits()
@@ -2027,6 +1734,9 @@ def my_habits_page():
         
         st.markdown("</div>", unsafe_allow_html=True)
 
+# -------------------------------
+# TODAY STATUS PAGE
+# -------------------------------
 def today_status_page():
     apply_cartoon_styles()
     initialize_daily_habits()
@@ -2127,6 +1837,9 @@ def today_status_page():
         
         st.markdown('</div>', unsafe_allow_html=True)
 
+# -------------------------------
+# WEEKLY PERFORMANCE PAGE
+# -------------------------------
 def weekly_perf_page():
     apply_cartoon_styles()
     initialize_daily_habits()
@@ -2155,118 +1868,303 @@ def weekly_perf_page():
     st.markdown("# Weekly Performance Report")
     
     # Get enhanced weekly data
-    weekly_data = weekly_perf_api(st.session_state.user["user_id"])
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### 📈 Your Weekly Performance")
+    if st.session_state.user:
+        weekly_data = weekly_perf_api(st.session_state.user["user_id"])
         
-        if weekly_data.get("success"):
-            # Check if it's end of week
-            today = datetime.now()
-            if today.weekday() != 6:  # Not Sunday
-                st.info("📅 **Weekly Report Availability**")
-                st.write(f"Your comprehensive weekly report will be generated on **Sunday**.")
-                st.write(f"**Current Week:** {weekly_data.get('week_start', 'N/A')} to {weekly_data.get('week_end', 'N/A')}")
-                st.write("Continue building your habits throughout the week for a complete performance analysis!")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
+            st.markdown("### 📈 Your Weekly Performance")
+            
+            if weekly_data.get("success"):
+                completion_pct = weekly_data.get("completion_pct", 0)
+                total_habits = weekly_data.get("total_habits", 0)
+                completed_habits = weekly_data.get("completed_habits", 0)
+                daily_breakdown = weekly_data.get("daily_breakdown", [])
                 
-                # Show current progress preview without pie chart
-                st.markdown("#### 🎯 Current Week Preview")
-                today_habits = st.session_state.today_habits
-                completed_today = sum(1 for habit in today_habits if habit.get('completed', False))
-                total_today = len(today_habits)
+                st.write(f"**Week:** {weekly_data.get('week_start', 'N/A')} to {weekly_data.get('week_end', 'N/A')}")
                 
-                if total_today > 0:
-                    st.write(f"**Today's Progress:** {completed_today}/{total_today} habits completed ({completed_today/total_today*100:.1f}%)")
+                cols = st.columns(2)
+                with cols[0]:
+                    st.metric("Weekly Completion", f"{completion_pct:.1f}%")
+                with cols[1]:
+                    st.metric("Habits Completed", f"{completed_habits}/{total_habits}")
+                
+                # Weekly progress chart
+                if daily_breakdown:
+                    st.markdown("#### 📊 Daily Progress")
+                    fig = create_weekly_chart(weekly_data)
+                    if fig:
+                        st.pyplot(fig)
+                
+                # Star rating display
+                st.markdown("### 🏆 Your Star Rating")
+                display_stars(st.session_state.weekly_stars)
+                
+                # Achievement messages
+                if st.session_state.weekly_stars == 5:
+                    st.success("🌟 **Habit Superstar!** You're amazing! Keep up the perfect work!")
+                elif st.session_state.weekly_stars == 4:
+                    st.success("🎯 **Excellent Performer!** You're building strong habits consistently!")
+                elif st.session_state.weekly_stars == 3:
+                    st.info("💪 **Solid Achiever!** You're making great progress!")
+                elif st.session_state.weekly_stars == 2:
+                    st.info("📈 **Good Starter!** You're on the right track!")
+                elif st.session_state.weekly_stars == 1:
+                    st.info("🌱 **Getting There!** Every habit counts!")
                 else:
-                    st.write("**Today's Progress:** No habits scheduled yet")
+                    st.info("🎯 **New Week, New Start!** Complete habits to earn stars!")
                     
-                return
-            
-            # Only show full report on Sunday
-            completion_pct = weekly_data.get("completion_pct", 0)
-            total_habits = weekly_data.get("total_habits", 0)
-            completed_habits = weekly_data.get("completed_habits", 0)
-            daily_breakdown = weekly_data.get("daily_breakdown", [])
-            
-            st.success("🎉 **Weekly Report Generated!**")
-            st.write(f"**Week:** {weekly_data.get('week_start', 'N/A')} to {weekly_data.get('week_end', 'N/A')}")
-            
-            cols = st.columns(2)
-            with cols[0]:
-                st.metric("Weekly Completion", f"{completion_pct:.1f}%")
-            with cols[1]:
-                st.metric("Habits Completed", f"{completed_habits}/{total_habits}")
-            
-            # Weekly progress chart
-            if daily_breakdown:
-                st.markdown("#### 📊 Daily Progress")
-                fig = create_weekly_chart(weekly_data)
-                if fig:
-                    st.pyplot(fig)
-            
-            # Star rating display
-            st.markdown("### 🏆 Your Star Rating")
-            display_stars(st.session_state.weekly_stars)
-            
-            # Achievement messages
-            if st.session_state.weekly_stars == 5:
-                st.success("🌟 **Habit Superstar!** You're amazing! Keep up the perfect work!")
-            elif st.session_state.weekly_stars == 4:
-                st.success("🎯 **Excellent Performer!** You're building strong habits consistently!")
-            elif st.session_state.weekly_stars == 3:
-                st.info("💪 **Solid Achiever!** You're making great progress!")
-            elif st.session_state.weekly_stars == 2:
-                st.info("📈 **Good Starter!** You're on the right track!")
-            elif st.session_state.weekly_stars == 1:
-                st.info("🌱 **Getting There!** Every habit counts!")
             else:
-                st.info("🎯 **New Week, New Start!** Complete habits to earn stars!")
+                st.info("Complete some habits to see your weekly performance!")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
+            st.markdown("### 📊 Performance Metrics")
+            
+            st.markdown("""
+            #### How Stars Are Earned:
+            
+            ⭐⭐⭐⭐⭐ **5 Stars** - 95%+ completion  
+            ⭐⭐⭐⭐ **4 Stars** - 85%+ completion  
+            ⭐⭐⭐ **3 Stars** - 70%+ completion  
+            ⭐⭐ **2 Stars** - 50%+ completion  
+            ⭐ **1 Star** - 25%+ completion  
+            ☆ **0 Stars** - Below 25% completion
+            
+            #### Tips for Better Performance:
+            - Complete habits consistently every day
+            - Use timers to track your progress
+            - Set realistic time targets
+            - Don't forget to mark habits as completed
+            - Build a sustainable routine
+            
+            **Remember:** Every star represents your dedication! 🌟
+            """)
+            
+            st.markdown("### 🎯 This Week's Goal")
+            current_stars = st.session_state.weekly_stars
+            if current_stars < 5:
+                next_threshold = [25, 50, 70, 85, 95][current_stars]
+                st.info(f"Aim for **{next_threshold}%** completion to reach **{current_stars + 1} stars** this week!")
+            else:
+                st.success("🎉 You've reached the maximum stars! Maintain your excellent performance!")
+            
+            # Daily breakdown
+            if weekly_data.get('daily_breakdown'):
+                st.markdown("### 📅 Daily Breakdown")
+                for day_data in weekly_data['daily_breakdown']:
+                    emoji = "✅" if day_data['completion_rate'] >= 80 else "🟡" if day_data['completion_rate'] >= 50 else "🔴"
+                    st.write(f"{emoji} **{day_data['day_name']}:** {day_data['completed_habits']}/{day_data['total_habits']} habits ({day_data['completion_rate']:.0f}%)")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+
+# -------------------------------
+# HABIT REMINDER SYSTEM PAGE
+# -------------------------------
+def habit_reminder_system_page():
+    apply_cartoon_styles()
+    
+    st.markdown("# 🔔 Habit Reminder System")
+    
+    tab1, tab2 = st.tabs(["🕒 Reminder Settings", "📅 Weekly Planner"])
+
+    # --- TAB 1: Reminder Settings ---
+    with tab1:
+        st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
+        
+        # Load current settings
+        alarm_settings = load_json(ALARM_FILE)
+        
+        if alarm_settings:
+            try:
+                saved_time = datetime.strptime(alarm_settings["time"], "%H:%M").time()
+            except:
+                saved_time = datetime.now().time()
+            saved_days = alarm_settings.get("days", [])
+            enabled = alarm_settings.get("enabled", True)
+        else:
+            saved_time = datetime.now().time()
+            saved_days = []
+            enabled = True
+
+        use_alarm = st.checkbox("Enable weekly habit reminders", value=enabled)
+        
+        if use_alarm:
+            alarm_time = st.time_input("Select reminder time", value=saved_time)
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            selected_days = st.multiselect("Select days for reminders", days, default=saved_days)
+
+            if selected_days:
+                st.write(f"**Reminders set for:** {alarm_time.strftime('%I:%M %p')}")
+                days_display = "".join([f'<span class="day-pill active">{day[:3]}</span>' for day in selected_days])
+                st.markdown(f"**Selected Days:** {days_display}", unsafe_allow_html=True)
+            else:
+                st.warning("Please select at least one day for reminders")
+
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("💾 Save Settings", use_container_width=True):
+                    if selected_days:
+                        new_settings = {
+                            "time": alarm_time.strftime("%H:%M"), 
+                            "days": selected_days, 
+                            "enabled": True,
+                            "last_updated": datetime.now().isoformat()
+                        }
+                        if save_json(ALARM_FILE, new_settings):
+                            show_alarm_popup("✅ Reminder settings saved! You'll receive notifications on selected days.", "success")
+                            show_alarm_notification("Weekly alarm settings saved!")
+                        else:
+                            show_alarm_popup("❌ Failed to save settings", "error")
+                    else:
+                        show_alarm_popup("❌ Please select at least one day for reminders", "error")
+
+            with col2:
+                if st.button("🔊 Test Sound", use_container_width=True):
+                    show_alarm_popup("Playing test sound...", "info")
+                    show_alarm_notification("Testing alarm sound...")
+                    threading.Thread(target=test_alarm, daemon=True).start()
+
+            with col3:
+                if st.button("⏹ Stop Alarm", use_container_width=True, type="secondary"):
+                    if stop_alarm():
+                        show_alarm_popup("✅ Alarm stopped successfully!", "success")
+                        show_alarm_notification("Alarm stopped")
+                    else:
+                        show_alarm_popup("❌ No alarm is currently playing", "warning")
                 
         else:
-            st.info("Complete some habits to see your weekly performance!")
+            if st.button("Disable Reminders", use_container_width=True):
+                if alarm_settings:
+                    alarm_settings["enabled"] = False
+                    save_json(ALARM_FILE, alarm_settings)
+                show_alarm_popup("Reminders disabled. Enable the checkbox above to activate weekly notifications.", "warning")
+
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    with col2:
+
+    # --- TAB 2: Weekly Planner ---
+    with tab2:
         st.markdown('<div class="cartoon-card">', unsafe_allow_html=True)
-        st.markdown("### 📊 Performance Metrics")
+        st.markdown("### 📅 Weekly Habit Planner")
         
-        st.markdown("""
-        #### How Stars Are Earned:
+        habits = load_json(HABITS_FILE) or {}
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         
-        ⭐⭐⭐⭐⭐ **5 Stars** - 95%+ completion  
-        ⭐⭐⭐⭐ **4 Stars** - 85%+ completion  
-        ⭐⭐⭐ **3 Stars** - 70%+ completion  
-        ⭐⭐ **2 Stars** - 50%+ completion  
-        ⭐ **1 Star** - 25%+ completion  
-        ☆ **0 Stars** - Below 25% completion
+        # Professional Grid Layout
+        st.markdown("#### Your Weekly Schedule")
+        st.markdown('<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin: 1rem 0;">', unsafe_allow_html=True)
         
-        #### Tips for Better Performance:
-        - Complete habits consistently every day
-        - Use timers to track your progress
-        - Set realistic time targets
-        - Don't forget to mark habits as completed
-        - Build a sustainable routine
+        for day in days:
+            day_habits = habits.get(day, [])
+            
+            st.markdown(f'''
+            <div class="day-card">
+                <div class="day-header">{day}</div>
+            ''', unsafe_allow_html=True)
+            
+            if day_habits:
+                for i, habit in enumerate(day_habits, 1):
+                    if isinstance(habit, dict):
+                        habit_name = habit.get('name', 'Unknown Habit')
+                        completed = habit.get('completed', False)
+                        habit_class = "habit-item completed-habit" if completed else "habit-item"
+                        st.markdown(f'<div class="{habit_class}">{i}. {habit_name} {"✅" if completed else ""}</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div class="habit-item">{i}. {habit}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="empty-state">No habits scheduled</div>', unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        **Remember:** Every star represents your dedication! 🌟
-        """)
+        st.markdown('</div>', unsafe_allow_html=True)  # Close grid
         
-        st.markdown("### 🎯 This Week's Goal")
-        current_stars = st.session_state.weekly_stars
-        if current_stars < 5:
-            next_threshold = [25, 50, 70, 85, 95][current_stars]
-            st.info(f"Aim for **{next_threshold}%** completion to reach **{current_stars + 1} stars** this week!")
-        else:
-            st.success("🎉 You've reached the maximum stars! Maintain your excellent performance!")
+        # Habit Management Section
+        st.markdown("---")
+        st.markdown("#### Manage Habits")
         
-        # Daily breakdown
-        if weekly_data.get('daily_breakdown'):
-            st.markdown("### 📅 Daily Breakdown")
-            for day_data in weekly_data['daily_breakdown']:
-                emoji = "✅" if day_data['completion_rate'] >= 80 else "🟡" if day_data['completion_rate'] >= 50 else "🔴"
-                st.write(f"{emoji} **{day_data['day_name']}:** {day_data['completed_habits']}/{day_data['total_habits']} habits ({day_data['completion_rate']:.0f}%)")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            selected_day = st.selectbox("Select Day", days, key="planner_day_select")
+            new_habit = st.text_input("Habit Name", key="planner_habit_input", placeholder="Enter habit name...")
+            
+            if st.button("➕ Add Habit", use_container_width=True):
+                if new_habit.strip():
+                    habits.setdefault(selected_day, []).append(new_habit.strip())
+                    if save_json(HABITS_FILE, habits):
+                        show_alarm_popup(f"✅ Added '{new_habit}' to {selected_day}", "success")
+                        st.rerun()
+                    else:
+                        show_alarm_popup("❌ Failed to save habit", "error")
+                else:
+                    show_alarm_popup("⚠️ Please enter a habit name", "warning")
+        
+        with col2:
+            # Get habits for selected day
+            day_habits = habits.get(selected_day, [])
+            available_habits_to_remove = []
+            
+            for habit in day_habits:
+                if isinstance(habit, dict):
+                    available_habits_to_remove.append(habit.get('name', 'Unknown Habit'))
+                else:
+                    available_habits_to_remove.append(habit)
+            
+            habit_to_remove = st.selectbox(
+                "Select Habit to Remove",
+                options=available_habits_to_remove,
+                key="remove_habit_select",
+                placeholder="Select a habit to remove..."
+            )
+            
+            if st.button("🗑️ Remove Habit", use_container_width=True):
+                if habit_to_remove and selected_day in habits:
+                    # Find and remove the habit
+                    updated_habits = []
+                    for habit in habits[selected_day]:
+                        if isinstance(habit, dict):
+                            if habit.get('name') != habit_to_remove:
+                                updated_habits.append(habit)
+                        else:
+                            if habit != habit_to_remove:
+                                updated_habits.append(habit)
+                    
+                    habits[selected_day] = updated_habits
+                    if save_json(HABITS_FILE, habits):
+                        show_alarm_popup(f"✅ Removed '{habit_to_remove}' from {selected_day}", "success")
+                        st.rerun()
+                    else:
+                        show_alarm_popup("❌ Failed to remove habit", "error")
+                else:
+                    show_alarm_popup("⚠️ Please select a habit to remove", "warning")
+            
+            if st.button("🧹 Clear All for Day", use_container_width=True):
+                if selected_day in habits:
+                    habits[selected_day] = []
+                    if save_json(HABITS_FILE, habits):
+                        show_alarm_popup(f"✅ Cleared all habits for {selected_day}", "success")
+                        st.rerun()
+                    else:
+                        show_alarm_popup("❌ Failed to clear habits", "error")
+        
+        # Statistics Section
+        st.markdown("---")
+        st.markdown("#### 📊 Weekly Statistics")
+        
+        total_habits = sum(len(habits.get(day, [])) for day in days)
+        days_with_habits = sum(1 for day in days if habits.get(day))
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Habits", total_habits)
+        with col2:
+            st.metric("Days Scheduled", f"{days_with_habits}/7")
+        with col3:
+            st.metric("Completion Rate", "Tracked Weekly")
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2375,6 +2273,7 @@ def main():
         st.session_state.alarm_notification = None
         st.session_state.active_alarm_sound = None
         st.session_state.alarm_sound_playing = False
+        st.session_state.today_date_key = None
         st.rerun()
 
 if __name__ == "__main__":

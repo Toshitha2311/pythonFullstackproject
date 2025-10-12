@@ -1,16 +1,27 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from fastapi.middleware.cors import CORSMiddleware
 import sys, os
 import hashlib
 import uuid
+import json
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../src"))
 import logic
 import db
 
 app = FastAPI(title="HabitHub API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8501", "http://127.0.0.1:8501"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # -------------------------------
 # PASSWORD HELPER
@@ -35,6 +46,7 @@ class HabitAddModel(BaseModel):
     name: str
     description: str | None = None
     user_id: str
+    target_minutes: int = 25
 
 class HabitIDModel(BaseModel):
     habit_id: str
@@ -97,11 +109,12 @@ def login_user(user: UserLoginModel):
         raise HTTPException(status_code=500, detail=f"Login error: {str(e)}")
 
 # -------------------------------
-# HABIT ROUTES
+# HABIT ROUTES - STORE IN JSON FOR HISTORICAL DATA
 # -------------------------------
 @app.post("/habit/add")
 def add_habit(habit: HabitAddModel):
     try:
+        # Store habit in database
         habit_data = {
             "name": habit.name,
             "description": habit.description,
@@ -175,7 +188,7 @@ def today_status(user: UserIDModel):
         
         # Get today's habits with completion status
         result = db.supabase.table("habit_logs")\
-            .select("*, habits(name, description)")\
+            .select("*, habits(*)")\
             .eq("user_id", user_id)\
             .eq("date", today)\
             .execute()
@@ -185,17 +198,24 @@ def today_status(user: UserIDModel):
         completed_habits = 0
         
         for log in result.data:
-            total_habits += 1
-            completed = log.get('completed', False)
-            if completed:
-                completed_habits += 1
-            
-            habits.append({
-                "habit_id": log["habit_id"],
-                "name": log["habits"]["name"],
-                "description": log["habits"].get("description"),
-                "completed": completed
-            })
+            if log.get('habits'):
+                habit_data = log['habits']
+                total_habits += 1
+                completed = log.get('completed', False)
+                
+                if completed:
+                    completed_habits += 1
+                
+                # Create habit object with expected fields
+                habit_obj = {
+                    "habit_id": log["habit_id"],
+                    "name": habit_data["name"],
+                    "completed": completed,
+                    "target_minutes": 25,  # Default value
+                    "description": habit_data.get("description", "")
+                }
+                
+                habits.append(habit_obj)
         
         return {
             "success": True,
@@ -206,12 +226,82 @@ def today_status(user: UserIDModel):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+@app.post("/habit/weekly-performance")
+def weekly_performance(user: UserIDModel):
+    try:
+        user_id = user.user_id
+        today = date.today()
+        
+        # Calculate week start (Monday)
+        start_of_week = today - timedelta(days=today.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
+        
+        # Calculate weekly performance from JSON files
+        total_habits = 0
+        completed_habits = 0
+        daily_breakdown = []
+        
+        # Initialize daily breakdown
+        for i in range(7):
+            day_date = start_of_week + timedelta(days=i)
+            daily_breakdown.append({
+                "date": day_date.isoformat(),
+                "day_name": day_date.strftime('%A'),
+                "total_habits": 0,
+                "completed_habits": 0,
+                "completion_rate": 0
+            })
+        
+        # Load data from JSON files for each day of the week
+        current_date = start_of_week
+        while current_date <= end_of_week:
+            date_str = current_date.strftime('%Y%m%d')
+            history_file = f"habit_history_{date_str}.json"
+            
+            if os.path.exists(history_file):
+                with open(history_file, 'r') as f:
+                    day_data = json.load(f)
+                    user_day_habits = day_data.get(user_id, [])
+                    
+                    day_total = len(user_day_habits)
+                    day_completed = sum(1 for habit in user_day_habits if habit.get('completed', False))
+                    
+                    # Update daily breakdown
+                    for day_data in daily_breakdown:
+                        if day_data["date"] == current_date.isoformat():
+                            day_data["total_habits"] = day_total
+                            day_data["completed_habits"] = day_completed
+                            if day_total > 0:
+                                day_data["completion_rate"] = round((day_completed / day_total) * 100, 1)
+                            break
+                    
+                    total_habits += day_total
+                    completed_habits += day_completed
+            
+            current_date += timedelta(days=1)
+        
+        # Calculate overall completion
+        overall_completion = (completed_habits / total_habits * 100) if total_habits > 0 else 0
+        
+        return {
+            "success": True,
+            "total_habits": total_habits,
+            "completed_habits": completed_habits,
+            "completion_pct": round(overall_completion, 1),
+            "week_start": start_of_week.isoformat(),
+            "week_end": end_of_week.isoformat(),
+            "daily_breakdown": daily_breakdown
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.post("/weekly/report")
 def weekly_report(user: UserIDModel):
     try:
-        # Calculate weekly performance (simplified version)
+        # Calculate weekly performance using database approach from second code
         today = date.today()
-        start_of_week = today  # Simplified - in real app, calculate week start
+        start_of_week = today - timedelta(days=today.weekday())  # Monday
         
         result = db.supabase.table("habit_logs")\
             .select("completed")\
@@ -230,7 +320,9 @@ def weekly_report(user: UserIDModel):
             "completion_pct": round(completion_pct, 1),
             "stars": stars,
             "total_habits": total_logs,
-            "completed_habits": completed_logs
+            "completed_habits": completed_logs,
+            "week_start": start_of_week.isoformat(),
+            "week_end": (start_of_week + timedelta(days=6)).isoformat()
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -242,29 +334,38 @@ scheduler = BackgroundScheduler()
 
 def daily_task():
     """
-    Generate daily logs for all habits at the start of the day
+    Generate daily logs for all active habits at the start of the day
     """
     try:
         users_resp = db.supabase.table("users").select("user_id").execute()
         if users_resp.data:
             for u in users_resp.data:
                 user_id = u["user_id"]
+                today = date.today().isoformat()
+                
+                # Get all active habits for this user
                 habits_resp = db.supabase.table("habits").select("habit_id").eq("user_id", user_id).execute()
                 habits = habits_resp.data
-                today = date.today().isoformat()
+                
                 for h in habits:
                     # Check if today's log exists
-                    logs = db.supabase.table("habit_logs").select("*").eq("habit_id", h["habit_id"]).eq("date", today).execute()
+                    logs = db.supabase.table("habit_logs").select("*")\
+                        .eq("habit_id", h["habit_id"])\
+                        .eq("date", today)\
+                        .execute()
+                    
                     if not logs.data:
+                        # Create today's log
                         db.supabase.table("habit_logs").insert({
                             "habit_id": h["habit_id"],
                             "user_id": user_id,
                             "date": today,
                             "completed": False
                         }).execute()
+                        
+        print(f"Daily logs created for {date.today().isoformat()}")
     except Exception as e:
         print(f"Daily task error: {e}")
-
 
 def weekly_task():
     """
@@ -341,12 +442,18 @@ def store_weekly_report(user_id, performance_data):
         print(f"Error storing weekly report: {e}")
 
 # Schedule tasks
-scheduler.add_job(daily_task, 'cron', hour=0, minute=1)
-scheduler.add_job(weekly_task, 'cron', day_of_week='sun', hour=23, minute=59)
+scheduler.add_job(daily_task, 'cron', hour=0, minute=1)  # Run daily at 12:01 AM
+scheduler.add_job(weekly_task, 'cron', day_of_week='sun', hour=23, minute=59)  # Run weekly on Sunday
 scheduler.start()
+
 @app.get("/")
 def root():
     return {"message": "HabitHub API is running", "status": "healthy"}
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 # For running with uvicorn directly
 if __name__ == "__main__":
